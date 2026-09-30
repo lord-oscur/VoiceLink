@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VoiceLink · LM Studio voice chat</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <div class="brand">Voice<span>Link</span></div>
+    <div id="llmStatus" class="pill">connecting…</div>
+  </header>
+
+  <main>
+    <section class="stage">
+      <button id="orb" class="orb idle" title="Start">
+        <span class="ring"></span>
+        <span class="core"></span>
+      </button>
+      <div id="stateLabel" class="state-label">Click the orb to start</div>
+      <div id="metrics" class="metrics"></div>
+    </section>
+
+    <section id="chat" class="chat" aria-live="polite"></section>
+
+    <form id="textForm" class="composer" autocomplete="off">
+      <input id="textInput" placeholder="Type a message (or just talk)…">
+      <button type="submit">Send</button>
+    </form>
+  </main>
+
+  <footer class="controls">
+    <button id="micBtn" class="toggle on" title="Mute / unmute microphone (M)">Mic on</button>
+    <button id="stopBtn" title="Stop the assistant (Esc)">Stop</button>
+    <label class="check" title="With headphones the echo check is skipped and barge-in is faster">
+      <input type="checkbox" id="headphones"> Headphones
+    </label>
+    <label>Voice
+      <select id="voice"><option value="">Auto (by language)</option></select>
+    </label>
+    <label>Speed <input type="range" id="speed" min="0.7" max="1.5" step="0.05"> <output id="speedOut"></output></label>
+    <button id="resetBtn" title="Forget the conversation">New chat</button>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

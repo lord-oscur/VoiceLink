@@ -1,0 +1,6 @@
+# Optional CUDA build of ONNX Runtime (installed by "setup.bat gpu").
+# 1.26 is the last release built for CUDA 12; CUDA 13 (ORT >= 1.27) no longer
+# supports Pascal cards such as the GTX 10xx series.
+onnxruntime-gpu[cuda,cudnn]==1.26.*
+# cuDNN releases after 9.10 dropped Pascal kernels.
+nvidia-cudnn-cu12==9.10.2.21

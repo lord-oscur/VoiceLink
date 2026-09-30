@@ -1,0 +1,8 @@
+.venv/
+models/
+data/
+__pycache__/
+*.pyc
+*.part
+*.log
+.chrome-tmp/
