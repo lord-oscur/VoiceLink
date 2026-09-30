@@ -1,5 +1,6 @@
 // VoiceLink browser client: microphone capture, audio playback and UI.
 // All speech processing happens on the Python server over one WebSocket.
+import * as attach from "./attach.js";
 import * as history from "./history.js";
 import { hydrateIcons, icon } from "./icons.js";
 import { initModelPanel, panelOpened, setStatus } from "./modelpanel.js";
@@ -201,7 +202,7 @@ function sendConfig() {
 function connect() {
   ws = new WebSocket(`ws://${location.host}/ws`);
   ws.binaryType = "arraybuffer";
-  ws.onopen = () => { reconnectDelay = 500; sendConfig(); };
+  ws.onopen = () => { reconnectDelay = 500; sendConfig(); attach.resend(); };
   ws.onclose = () => {
     if (started) setState("idle", "Disconnected from server — retrying…");
     setTimeout(connect, reconnectDelay);
@@ -228,7 +229,8 @@ function handle(m) {
       break;
     case "user":
       clearPartial();
-      addMsg("user", m.text);
+      addMsg("user", m.text, m.attachments);
+      if (m.attachments && m.attachments.length) attach.consumed(m.attachments.map((a) => a.id));
       break;
     case "ignored":
       clearPartial();
@@ -258,7 +260,7 @@ function handle(m) {
     case "conversation":
       clearChat();
       for (const msg of m.messages) {
-        const el = addMsg(msg.role === "user" ? "user" : "assistant", msg.content);
+        const el = addMsg(msg.role === "user" ? "user" : "assistant", msg.content, msg.attachments);
         if (msg.role === "assistant" && /\s—$/.test(msg.content)) el.classList.add("interrupted");
       }
       addMsg("system", `Continuing “${m.title}”`);
@@ -281,10 +283,20 @@ function setState(s, label) {
   els.state.textContent = label || STATE_TEXT[s] || "";
 }
 
-function addMsg(role, text) {
+const KIND_ICON = { image: "image", document: "file", audio: "music", video: "film" };
+
+function addMsg(role, text, attachments) {
   const el = document.createElement("div");
   el.className = "msg " + role;
   el.textContent = text;
+  if (attachments && attachments.length) {
+    const row = document.createElement("div");
+    row.className = "msg-atts";
+    row.innerHTML = attachments.map((a) => a.data
+      ? `<img src="${a.data}" alt="${esc(a.name)}" title="${esc(a.name)}">`
+      : `<span class="msg-att" title="${esc(a.name)}">${icon(KIND_ICON[a.kind] || "file")}${esc(a.name)}</span>`).join("");
+    el.prepend(row);
+  }
   els.chat.appendChild(el);
   scrollChat();
   return el;
@@ -367,6 +379,7 @@ function showLLM(llm) {
     `<span class="caps">${llm.ok ? capsHTML(llm.info) : ""}</span>`;
   els.pill.title = title + "\nClick for model settings";
   setStatus(llm);
+  attach.setCaps(llm.ok ? llm.info : null);
 }
 
 async function pollStatus() {
@@ -438,7 +451,8 @@ function toggleMic() {
 
 function sendText() {
   const text = els.input.value.trim();
-  if (!text) return;
+  if (attach.isBusy()) { toast("Wait until the attachments are ready", "error"); return; }
+  if (!text && !attach.hasReady()) return;
   const go = async () => {
     if (!started) await start();
     const trySend = () => {
@@ -520,6 +534,7 @@ settings.onChange((paths) => {
 initVoicePanel({ playPreview, lang: () => lastLang });
 initProfiles();
 history.initHistory({ newChat, open: openConversation });
+attach.initAttach({ send: (obj) => whenOpen(() => send(obj)) });
 initModelPanel({ statusChanged: (llm) => { if (llm) showLLM(llm); else pollStatus(); } });
 applyPanels();
 ensureSocket();

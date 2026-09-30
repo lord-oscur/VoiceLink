@@ -207,6 +207,33 @@ option { color: var(--text); }
 }
 .composer .send { background: var(--user); border-color: var(--user); color: #fff; height: 44px; width: 48px; padding: 0; }
 
+/* -------------------------------------------------------- attachments */
+
+.attach-btn { height: 44px; width: 44px; padding: 0; border-radius: 12px; color: var(--muted); }
+.attach-btn:hover { color: var(--text); }
+.attach-tray { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 0 0; }
+.att {
+  display: flex; align-items: center; gap: 8px; max-width: 260px; padding: 4px 4px 4px 8px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--panel); font-size: 12.5px;
+}
+.att img { width: 34px; height: 34px; object-fit: cover; border-radius: 6px; }
+.att > .ico { color: var(--muted); }
+.att-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.att-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.att-note { font-size: 11px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.att.busy .att-note { color: var(--think); }
+.att.error { border-color: #6b2a2a; }
+.att.error .att-note { color: var(--warn); }
+.att .icon-btn .ico { width: 14px; height: 14px; }
+.center.drop { outline: 2px dashed #6d5bd0; outline-offset: -8px; border-radius: 14px; }
+.msg-atts { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.msg-atts img { max-width: 180px; max-height: 140px; border-radius: 8px; display: block; }
+.msg-att {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 2px 8px;
+  border-radius: 7px; background: #ffffff22;
+}
+.msg-att .ico { width: 14px; height: 14px; }
+
 /* -------------------------------------------------------- side panels */
 
 .side {
@@ -264,7 +291,11 @@ details.card[open] summary { margin-bottom: 8px; }
 .wide-btn { width: 100%; margin-top: 6px; background: #1b1f33; border-color: #34305a; }
 .wide-btn:hover:not(:disabled) { border-color: #6d5bd0; }
 
-@media (max-width: 1100px) {
+@media (max-width: 1280px) {
+  .side.left { width: 230px; }
+  .side.right { width: 290px; }
+}
+@media (max-width: 860px) {
   .side { position: absolute; top: 49px; bottom: 0; z-index: 15; box-shadow: 0 0 40px #000a; background: #0f131bf5; }
   .side.left { left: 0; }
   .side.right { right: 0; }

@@ -21,7 +21,7 @@ updated as each item lands.
 | 11 | Emotion layer on top (order: normal audio → age → emotion). | done |
 | 12 | Chat history on the left: stored conversations. | done |
 | 13 | Model settings on the right: system prompt, context, etc., even for a model loaded through the API. | done |
-| 14 | Attach files to the chat according to the model's capabilities (images, audio, video, documents). | pending |
+| 14 | Attach files to the chat according to the model's capabilities (images, audio, video, documents). | done |
 | 15 | Spell check and grammar check in the text box, with coloured underlines, replacement suggestions, and a redundancy checker. | pending |
 | 16 | STT noise filter (PC fans, ambient sound). | pending |
 | 17 | STT input filter so a video playing on the same PC does not trigger the STT. | pending |

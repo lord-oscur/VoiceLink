@@ -27,6 +27,7 @@ from difflib import SequenceMatcher
 
 import numpy as np
 
+from . import attachments as att
 from .llm import LLMError
 from .textproc import (LANGUAGE_NAMES, SentenceChunker, clean_for_speech, confident_language, detect_language,
                        has_words, normalized_words)
@@ -93,6 +94,7 @@ class Turn:
         self.hist_idx = None
         self.lang = None
         self.user_lang = None
+        self.attachments = []
         self.metrics = {}
         if speech_end:
             self.metrics["start_ms"] = round((now() - speech_end) * 1000)
@@ -137,6 +139,7 @@ class Session:
         self.history = []
         self.conv_id = None
         self.titled = False
+        self.pending = {}           # attachments waiting for the next user turn (id -> record)
         self.gen = {}
         self.system_prompt = None
         self.langs = self.cfg["stt"]["languages"] or None
@@ -238,11 +241,20 @@ class Session:
                 self.system_prompt = (msg["system_prompt"] or "").strip() or None
         elif kind == "text":
             text = (msg.get("text") or "").strip()
-            if text:
+            if text or self.pending:
                 self._interrupt("typed message")
                 self._cancel_spec()
                 turn = self._new_turn(text=text)
                 self._commit(turn)
+        elif kind == "attach_add":
+            a = msg.get("attachment") or {}
+            if a.get("kind") in ("image", "document", "audio", "video") and a.get("id"):
+                self.pending[str(a["id"])] = {k: a.get(k) for k in (
+                    "id", "kind", "name", "data", "text", "frames", "duration", "truncated") if a.get(k) is not None}
+        elif kind == "attach_remove":
+            self.pending.pop(str(msg.get("id")), None)
+        elif kind == "attach_clear":
+            self.pending.clear()
         elif kind == "playback_idle":
             t = self.turn
             if t and t.id == msg.get("turn") and t.done:
@@ -270,8 +282,9 @@ class Session:
             self.history = conv.get("messages", [])
             self.conv_id = conv["id"]
             self.titled = True
-            self.send({"type": "conversation", "id": conv["id"], "title": conv.get("title"),
-                       "messages": self.history})
+            shown = [dict(m, attachments=[att.public(a) for a in m["attachments"]]) if m.get("attachments") else m
+                     for m in self.history]
+            self.send({"type": "conversation", "id": conv["id"], "title": conv.get("title"), "messages": shown})
             self._refresh_state()
 
     def on_audio(self, data):
@@ -471,6 +484,7 @@ class Session:
     def _new_turn(self, audio=None, text=None, speech_end=None):
         self.seq += 1
         turn = Turn(self.seq, audio=audio, text=text, speech_end=speech_end)
+        turn.attachments = list(self.pending.values())
         turn.task = asyncio.create_task(self._run_turn(turn))
         return turn
 
@@ -549,12 +563,17 @@ class Session:
             return
         self.send({"type": "conv_saved", "id": cid, "title": conv["title"]})
 
-    def _history_with_user(self, text):
+    def _history_with_user(self, text, attachments=None):
         hist = [dict(m) for m in self.history]
         if hist and hist[-1]["role"] == "user":
-            hist[-1]["content"] += " " + text
+            hist[-1]["content"] = (hist[-1]["content"] + " " + text).strip()
+            if attachments:
+                hist[-1]["attachments"] = list(hist[-1].get("attachments") or []) + list(attachments)
         else:
-            hist.append({"role": "user", "content": text, "ts": _ts()})
+            m = {"role": "user", "content": text, "ts": _ts()}
+            if attachments:
+                m["attachments"] = list(attachments)
+            hist.append(m)
         return hist
 
     def _messages(self, hist):
@@ -563,7 +582,14 @@ class Session:
         while keep and keep[0]["role"] != "user":
             keep = keep[1:]
         system = self.system_prompt or self.cfg["llm"]["system_prompt"]
-        return [{"role": "system", "content": system}] + [{"role": m["role"], "content": m["content"]} for m in keep]
+        vision = bool(((self.eng.llm.info or {}).get("caps") or {}).get("vision"))
+        out = [{"role": "system", "content": system}]
+        for m in keep:
+            content = m["content"]
+            if m.get("attachments"):
+                content = att.llm_content(content, m["attachments"], vision)
+            out.append({"role": m["role"], "content": content})
+        return out
 
     async def _run_turn(self, turn):
         try:
@@ -572,7 +598,8 @@ class Session:
                 turn.user_text = await self._stt(turn.audio)
                 turn.metrics["stt_ms"] = round((now() - t0) * 1000)
             text = turn.user_text.strip()
-            if not has_words(text) or text.lower().strip(".,!? ") in _NOISE_WORDS:
+            typed_with_files = turn.audio is None and turn.attachments
+            if not typed_with_files and (not has_words(text) or text.lower().strip(".,!? ") in _NOISE_WORDS):
                 await turn.committed.wait()
                 log.info("Ignored empty/noise utterance %r", text)
                 if self.turn is turn:
@@ -581,7 +608,7 @@ class Session:
                 self._refresh_state()
                 return
 
-            hist = self._history_with_user(text)
+            hist = self._history_with_user(text, turn.attachments)
             sender = asyncio.create_task(self._sender(turn))
             tts_q = asyncio.Queue()
             tts = asyncio.create_task(self._tts_worker(turn, tts_q))
@@ -591,7 +618,12 @@ class Session:
             turn.user_lang = confident_language(text, self.langs)
             if turn.user_lang and len(self.langs or ()) != 1:
                 name = LANGUAGE_NAMES.get(turn.user_lang, turn.user_lang)
-                messages[-1] = {"role": "user", "content": f"{messages[-1]['content']}\n\n(Reply in {name}.)"}
+                last = messages[-1]["content"]
+                if isinstance(last, list):
+                    last = [dict(last[0], text=f"{last[0]['text']}\n\n(Reply in {name}.)")] + last[1:]
+                else:
+                    last = f"{last}\n\n(Reply in {name}.)"
+                messages[-1] = {"role": "user", "content": last}
 
             tc = self.cfg["tts"]
             chunker = SentenceChunker(tc["first_chunk_min_chars"], tc["chunk_max_chars"],
@@ -667,11 +699,15 @@ class Session:
         await turn.committed.wait()
         if turn.cancelled:
             return
-        self.history = self._history_with_user(turn.user_text.strip())
+        self.history = self._history_with_user(turn.user_text.strip(), turn.attachments)
+        for a in turn.attachments:
+            self.pending.pop(str(a.get("id")), None)
         self._persist()
-        log.info("User (turn %d): %r", turn.id, turn.user_text.strip())
+        log.info("User (turn %d): %r%s", turn.id, turn.user_text.strip(),
+                 f" + {len(turn.attachments)} attachment(s)" if turn.attachments else "")
         self.send({"type": "user", "turn": turn.id, "text": turn.user_text.strip(),
-                   "stt_ms": turn.metrics.get("stt_ms")})
+                   "stt_ms": turn.metrics.get("stt_ms"),
+                   "attachments": [att.public(a) for a in turn.attachments]})
         self._refresh_state()
         while True:
             item = await turn.outbox.get()

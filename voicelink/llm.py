@@ -50,6 +50,7 @@ class LMStudioClient:
         self.http = http
         self.base = cfg["base_url"].rstrip("/")
         self.model = None
+        self.info = None   # capabilities of the model in use (from status())
         # "effort" -> send reasoning_effort=none; "prefill" -> empty think block;
         # "off" -> let the model think (reasoning is never spoken).
         self.no_think = "effort" if cfg["disable_thinking"] else "off"
@@ -83,8 +84,12 @@ class LMStudioClient:
             return wanted
         try:
             loaded = [m for m in await self.models() if m["loaded"] and m["type"] in ("llm", "vlm")]
-            if loaded:
-                self.model = loaded[0]["instances"][0]["id"]
+            ids = [i["id"] for m in loaded for i in m["instances"]]
+            if ids:
+                # Keep the current model while it is loaded; asking for an unloaded
+                # one would make LM Studio load it again (JIT) with default settings.
+                if self.model not in ids:
+                    self.model = ids[0]
                 return self.model
         except aiohttp.ClientConnectorError:
             raise
@@ -106,6 +111,8 @@ class LMStudioClient:
                              if any(i["id"] == model for i in m["instances"]) or m["key"] == model), None)
             except Exception:
                 pass
+            if info:
+                self.info = info
             return {"ok": True, "model": model, "base_url": self.base, "info": info}
         except Exception as e:
             return {"ok": False, "error": str(e) or type(e).__name__, "base_url": self.base}
@@ -124,6 +131,7 @@ class LMStudioClient:
             body["flash_attention"] = bool(flash_attention)
         result = await self._post_json("/api/v1/models/load", body, timeout=600)
         self.model = result.get("instance_id") or key
+        self.info = None
         return result
 
     async def _post_json(self, path, body, timeout=30):

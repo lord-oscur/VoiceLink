@@ -68,6 +68,7 @@ class Engines:
         self.stt_pool = ThreadPoolExecutor(1, thread_name_prefix="stt")
         self.stt_jobs = 0
         self.tts_pool = ThreadPoolExecutor(1, thread_name_prefix="tts")
+        self.file_pool = ThreadPoolExecutor(1, thread_name_prefix="file-stt")  # attachments; keeps live STT free
         self.stt = SpeechToText(cfg["stt"])
         self.tts = TextToSpeech(cfg["tts"])
         self.store = ConversationStore()
@@ -164,6 +165,45 @@ async def conv_delete(request):
     return web.json_response({"ok": True})
 
 
+async def extract(request):
+    """Document -> text. Body: the raw file; ?name= gives its file name."""
+    from .attachments import UnsupportedFile, extract_text
+
+    name = request.query.get("name", "file.txt")
+    data = await request.read()
+    loop = asyncio.get_running_loop()
+    try:
+        text, truncated = await loop.run_in_executor(None, extract_text, name, data)
+    except UnsupportedFile as e:
+        return web.json_response({"ok": False, "error": str(e)})
+    except Exception as e:
+        log.warning("Could not read %s: %s", name, e)
+        return web.json_response({"ok": False, "error": f"could not read the file ({type(e).__name__})"})
+    return web.json_response({"ok": True, "text": text, "truncated": truncated, "chars": len(text)})
+
+
+async def transcribe(request):
+    """Audio file (already decoded by the browser) -> text. Body: int16 mono 16 kHz PCM."""
+    from .attachments import split_long_audio
+
+    eng = request.app["engines"]
+    data = await request.read()
+    audio = np.frombuffer(data[:len(data) // 2 * 2], dtype="<i2").astype(np.float32) / 32768.0
+    duration = len(audio) / 16000
+    if duration > eng.cfg["stt"].get("max_file_minutes", 30) * 60:
+        return web.json_response({"ok": False, "error": "the recording is too long"})
+    loop = asyncio.get_running_loop()
+    t = time.perf_counter()
+    parts = []
+    for piece in split_long_audio(audio):
+        if np.sqrt(np.mean(piece ** 2)) < 1e-4:
+            continue
+        parts.append(await loop.run_in_executor(eng.file_pool, eng.stt.transcribe, piece))
+    text = " ".join(p.strip() for p in parts if p and p.strip())
+    log.info("Transcribed %.0f s of attached audio in %.1f s", duration, time.perf_counter() - t)
+    return web.json_response({"ok": True, "text": text, "duration": round(duration, 2)})
+
+
 async def voices(request):
     tts = request.app["engines"].tts
     return web.json_response({"voices": tts.catalog, "voice_map": tts.voice_map,
@@ -187,7 +227,7 @@ async def preview(request):
 
 
 async def ws_handler(request):
-    ws = web.WebSocketResponse(max_msg_size=8 * 1024 * 1024, heartbeat=20)
+    ws = web.WebSocketResponse(max_msg_size=64 * 1024 * 1024, heartbeat=20)  # attached images
     await ws.prepare(request)
     eng = request.app["engines"]
     session = Session(ws, eng)
@@ -252,7 +292,7 @@ def main():
     engines = Engines(cfg)
     log.info("Models loaded in %.1fs", time.perf_counter() - t)
 
-    app = web.Application()
+    app = web.Application(client_max_size=256 * 1024 * 1024)  # attachments
     app["engines"] = engines
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
@@ -262,6 +302,8 @@ def main():
     app.router.add_get("/api/status", status)
     app.router.add_get("/api/voices", voices)
     app.router.add_post("/api/preview", preview)
+    app.router.add_post("/api/extract", extract)
+    app.router.add_post("/api/transcribe", transcribe)
     app.router.add_get("/api/llm_defaults", llm_defaults)
     app.router.add_get("/api/models", models_list)
     app.router.add_post("/api/models/load", models_load)
