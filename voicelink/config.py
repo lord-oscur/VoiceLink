@@ -59,6 +59,14 @@ DEFAULTS = {
             "pt": "pf_dora",
             "hi": "hf_alpha",
         },
+        # Used by "Auto" when the voice panel's gender filter is set to male.
+        "voices_male": {
+            "en": "am_michael",
+            "es": "em_alex",
+            "it": "im_nicola",
+            "pt": "pm_alex",
+            "hi": "hm_omega",
+        },
         "first_chunk_min_chars": 12,
         "first_chunk_wait_ms": 600,
         "chunk_max_chars": 220,

@@ -1,0 +1,326 @@
+{
+ "af_alloy": {
+  "lang": "en",
+  "gender": "female",
+  "f0": 138.6,
+  "age": 48
+ },
+ "af_aoede": {
+  "lang": "en",
+  "gender": "female",
+  "f0": 170.4,
+  "age": 41
+ },
+ "af_bella": {
+  "lang": "en",
+  "gender": "female",
+  "f0": 192.7,
+  "age": 36
+ },
+ "af_heart": {
+  "lang": "en",
+  "gender": "female",
+  "f0": 186.9,
+  "age": 37
+ },
+ "af_jessica": {
+  "lang": "en",
+  "gender": "female",
+  "f0": 202.4,
+  "age": 33
+ },
+ "af_kore": {
+  "lang": "en",
+  "gender": "female",
+  "f0": 140.4,
+  "age": 47
+ },
+ "af_nicole": {
+  "lang": "en",
+  "gender": "female",
+  "f0": 150.3,
+  "age": 45
+ },
+ "af_nova": {
+  "lang": "en",
+  "gender": "female",
+  "f0": 152.1,
+  "age": 45
+ },
+ "af_river": {
+  "lang": "en",
+  "gender": "female",
+  "f0": 172.3,
+  "age": 40
+ },
+ "af_sarah": {
+  "lang": "en",
+  "gender": "female",
+  "f0": 180.8,
+  "age": 38
+ },
+ "af_sky": {
+  "lang": "en",
+  "gender": "female",
+  "f0": 149.5,
+  "age": 45
+ },
+ "am_adam": {
+  "lang": "en",
+  "gender": "male",
+  "f0": 113.7,
+  "age": 37
+ },
+ "am_echo": {
+  "lang": "en",
+  "gender": "male",
+  "f0": 102.6,
+  "age": 41
+ },
+ "am_eric": {
+  "lang": "en",
+  "gender": "male",
+  "f0": 155.2,
+  "age": 22
+ },
+ "am_fenrir": {
+  "lang": "en",
+  "gender": "male",
+  "f0": 128.6,
+  "age": 31
+ },
+ "am_liam": {
+  "lang": "en",
+  "gender": "male",
+  "f0": 118.6,
+  "age": 35
+ },
+ "am_michael": {
+  "lang": "en",
+  "gender": "male",
+  "f0": 112.9,
+  "age": 37
+ },
+ "am_onyx": {
+  "lang": "en",
+  "gender": "male",
+  "f0": 85.2,
+  "age": 47
+ },
+ "am_puck": {
+  "lang": "en",
+  "gender": "male",
+  "f0": 105.8,
+  "age": 39
+ },
+ "am_santa": {
+  "lang": "en",
+  "gender": "male",
+  "f0": 159.4,
+  "age": 68
+ },
+ "bf_alice": {
+  "lang": "en",
+  "gender": "female",
+  "f0": 208.4,
+  "age": 32
+ },
+ "bf_emma": {
+  "lang": "en",
+  "gender": "female",
+  "f0": 176.6,
+  "age": 39
+ },
+ "bf_isabella": {
+  "lang": "en",
+  "gender": "female",
+  "f0": 196.4,
+  "age": 35
+ },
+ "bf_lily": {
+  "lang": "en",
+  "gender": "female",
+  "f0": 173.3,
+  "age": 40
+ },
+ "bm_daniel": {
+  "lang": "en",
+  "gender": "male",
+  "f0": 122.1,
+  "age": 34
+ },
+ "bm_fable": {
+  "lang": "en",
+  "gender": "male",
+  "f0": 111.5,
+  "age": 37
+ },
+ "bm_george": {
+  "lang": "en",
+  "gender": "male",
+  "f0": 141.6,
+  "age": 26
+ },
+ "bm_lewis": {
+  "lang": "en",
+  "gender": "male",
+  "f0": 86.9,
+  "age": 46
+ },
+ "ef_dora": {
+  "lang": "es",
+  "gender": "female",
+  "f0": 167.6,
+  "age": 41
+ },
+ "em_alex": {
+  "lang": "es",
+  "gender": "male",
+  "f0": 126.7,
+  "age": 32
+ },
+ "em_santa": {
+  "lang": "es",
+  "gender": "male",
+  "f0": 125.5,
+  "age": 68
+ },
+ "ff_siwis": {
+  "lang": "fr",
+  "gender": "female",
+  "f0": 204.4,
+  "age": 33
+ },
+ "hf_alpha": {
+  "lang": "hi",
+  "gender": "female",
+  "f0": 205.8,
+  "age": 33
+ },
+ "hf_beta": {
+  "lang": "hi",
+  "gender": "female",
+  "f0": 183.6,
+  "age": 38
+ },
+ "hm_omega": {
+  "lang": "hi",
+  "gender": "male",
+  "f0": 124.2,
+  "age": 33
+ },
+ "hm_psi": {
+  "lang": "hi",
+  "gender": "male",
+  "f0": 123.0,
+  "age": 33
+ },
+ "if_sara": {
+  "lang": "it",
+  "gender": "female",
+  "f0": 213.7,
+  "age": 31
+ },
+ "im_nicola": {
+  "lang": "it",
+  "gender": "male",
+  "f0": 90.4,
+  "age": 45
+ },
+ "jf_alpha": {
+  "lang": "ja",
+  "gender": "female",
+  "f0": 254.2,
+  "age": 22
+ },
+ "jf_gongitsune": {
+  "lang": "ja",
+  "gender": "female",
+  "f0": 223.8,
+  "age": 29
+ },
+ "jf_nezumi": {
+  "lang": "ja",
+  "gender": "female",
+  "f0": 254.9,
+  "age": 22
+ },
+ "jf_tebukuro": {
+  "lang": "ja",
+  "gender": "female",
+  "f0": 326.8,
+  "age": 10
+ },
+ "jm_kumo": {
+  "lang": "ja",
+  "gender": "male",
+  "f0": 93.4,
+  "age": 44
+ },
+ "pf_dora": {
+  "lang": "pt",
+  "gender": "female",
+  "f0": 179.7,
+  "age": 38
+ },
+ "pm_alex": {
+  "lang": "pt",
+  "gender": "male",
+  "f0": 133.1,
+  "age": 30
+ },
+ "pm_santa": {
+  "lang": "pt",
+  "gender": "male",
+  "f0": 136.8,
+  "age": 68
+ },
+ "zf_xiaobei": {
+  "lang": "zh",
+  "gender": "female",
+  "f0": 237.3,
+  "age": 26
+ },
+ "zf_xiaoni": {
+  "lang": "zh",
+  "gender": "female",
+  "f0": 234.8,
+  "age": 26
+ },
+ "zf_xiaoxiao": {
+  "lang": "zh",
+  "gender": "female",
+  "f0": 231.8,
+  "age": 27
+ },
+ "zf_xiaoyi": {
+  "lang": "zh",
+  "gender": "female",
+  "f0": 304.0,
+  "age": 11
+ },
+ "zm_yunjian": {
+  "lang": "zh",
+  "gender": "male",
+  "f0": 121.5,
+  "age": 34
+ },
+ "zm_yunxi": {
+  "lang": "zh",
+  "gender": "male",
+  "f0": 161.2,
+  "age": 19
+ },
+ "zm_yunxia": {
+  "lang": "zh",
+  "gender": "male",
+  "f0": 291.8,
+  "age": 10
+ },
+ "zm_yunyang": {
+  "lang": "zh",
+  "gender": "male",
+  "f0": 111.4,
+  "age": 37
+ }
+}

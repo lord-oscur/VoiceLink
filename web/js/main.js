@@ -1,12 +1,16 @@
-"use strict";
 // VoiceLink browser client: microphone capture, audio playback and UI.
 // All speech processing happens on the Python server over one WebSocket.
+import { hydrateIcons, icon } from "./icons.js";
+import { initProfiles } from "./profiles.js";
+import { settings } from "./settings.js";
+import { $, capsHTML, esc, toast } from "./ui.js";
+import { initVoicePanel, refreshDevices, setCatalog } from "./voicepanel.js";
 
-const $ = (id) => document.getElementById(id);
+hydrateIcons();
+
 const els = {
   orb: $("orb"), state: $("stateLabel"), metrics: $("metrics"), chat: $("chat"),
-  llm: $("llmStatus"), mic: $("micBtn"), stop: $("stopBtn"), reset: $("resetBtn"),
-  headphones: $("headphones"), voice: $("voice"), speed: $("speed"), speedOut: $("speedOut"),
+  pill: $("modelPill"), mic: $("micBtn"), stop: $("stopBtn"), reset: $("newChatBtn"),
   form: $("textForm"), input: $("textInput"),
 };
 
@@ -20,8 +24,10 @@ let ws = null;
 let started = false;
 let micOn = true;
 let state = "idle";
-let capCtx = null, playCtx = null, outGain = null, outAnalyser = null;
+let capCtx = null, capNode = null, micStream = null, micSource = null;
+let playCtx = null, outGain = null, outAnalyser = null;
 let nextTime = 0;
+let lastLang = "en";
 const sources = new Set();          // {src, turn, seg, start, end}
 const stopped = new Set();          // turn ids whose audio must be dropped
 const segInfo = new Map();          // "turn:seg" -> {text, start, end}
@@ -30,45 +36,83 @@ let partialEl = null;
 let micLevel = 0;
 let reconnectDelay = 500;
 
-const saved = JSON.parse(localStorage.getItem("voicelink") || "{}");
-els.headphones.checked = !!saved.headphones;
-els.speed.value = saved.speed || 1.05;
-els.speedOut.textContent = (+els.speed.value).toFixed(2) + "×";
-
 // ------------------------------------------------------------------ audio
 
-function startPlayback() {
+function ensurePlayback() {
+  if (playCtx) return;
   playCtx = new AudioContext({ latencyHint: "interactive" });
   outGain = playCtx.createGain();
   outAnalyser = playCtx.createAnalyser();
   outAnalyser.fftSize = 512;
   outGain.connect(outAnalyser).connect(playCtx.destination);
+  applySpeaker();
+}
+
+async function applySpeaker() {
+  if (!playCtx || !("setSinkId" in playCtx)) return;
+  const id = settings.get("devices.speaker") || "";
+  try {
+    await playCtx.setSinkId(id);
+  } catch (e) {
+    toast(`Speaker not available (${e.name}); using the system default`, "error");
+    await playCtx.setSinkId("").catch(() => {});
+  }
+}
+
+async function openMicStream() {
+  const audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 };
+  const id = settings.get("devices.mic");
+  if (id) {
+    try {
+      return await navigator.mediaDevices.getUserMedia({ audio: { ...audio, deviceId: { exact: id } } });
+    } catch (e) {
+      toast("The selected microphone is not available; using the system default", "error");
+    }
+  }
+  return navigator.mediaDevices.getUserMedia({ audio });
 }
 
 async function startMic() {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
-  });
-
+  const stream = await openMicStream();
   try {
     capCtx = new AudioContext({ sampleRate: 16000, latencyHint: "interactive" });
     await capCtx.audioWorklet.addModule("/static/capture-worklet.js");
-    capCtx.createMediaStreamSource(stream);
+    capCtx.createMediaStreamSource(stream).disconnect();
   } catch (e) {
     // Some browsers refuse a 16 kHz context for microphone input; resample in the worklet instead.
     if (capCtx) capCtx.close();
     capCtx = new AudioContext({ latencyHint: "interactive" });
     await capCtx.audioWorklet.addModule("/static/capture-worklet.js");
   }
-  const src = capCtx.createMediaStreamSource(stream);
-  const node = new AudioWorkletNode(capCtx, "capture", { numberOfOutputs: 1 });
+  capNode = new AudioWorkletNode(capCtx, "capture", { numberOfOutputs: 1 });
   const sink = capCtx.createGain();
   sink.gain.value = 0;
-  src.connect(node).connect(sink).connect(capCtx.destination);
-  node.port.onmessage = (ev) => {
+  capNode.connect(sink).connect(capCtx.destination);
+  capNode.port.onmessage = (ev) => {
     micLevel = ev.data.level;
     if (micOn && ws && ws.readyState === WebSocket.OPEN) ws.send(ev.data.pcm);
   };
+  attachStream(stream);
+  refreshDevices();   // labels are only visible once the microphone is allowed
+}
+
+function attachStream(stream) {
+  if (micSource) micSource.disconnect();
+  if (micStream) micStream.getTracks().forEach((t) => t.stop());
+  micStream = stream;
+  micSource = capCtx.createMediaStreamSource(stream);
+  micSource.connect(capNode);
+  const track = stream.getAudioTracks()[0];
+  if (track) track.onended = () => toast("The microphone was disconnected", "error");
+}
+
+async function switchMic() {
+  if (!capCtx) return;
+  try {
+    attachStream(await openMicStream());
+  } catch (e) {
+    toast("Could not open the microphone: " + e.message, "error");
+  }
 }
 
 function playSegment(buf) {
@@ -96,6 +140,18 @@ function playSegment(buf) {
     sources.delete(item);
     if (![...sources].some((s) => s.turn === turn)) send({ type: "playback_idle", turn });
   };
+}
+
+let previewSrc = null;
+async function playPreview(wav) {
+  ensurePlayback();
+  if (playCtx.state !== "running") await playCtx.resume();
+  const ab = await playCtx.decodeAudioData(wav);
+  if (previewSrc) try { previewSrc.stop(); } catch (_) {}
+  previewSrc = playCtx.createBufferSource();
+  previewSrc.buffer = ab;
+  previewSrc.connect(outGain);
+  previewSrc.start();
 }
 
 function stopPlayback(turn) {
@@ -128,13 +184,12 @@ function send(obj) {
 }
 
 function sendConfig() {
+  const gender = settings.get("gender");
   send({
-    type: "config", headphones: els.headphones.checked, mic: micOn,
-    voice: els.voice.value || null, speed: parseFloat(els.speed.value) || null,
+    type: "config", headphones: !!settings.get("headphones"), mic: micOn,
+    voice: settings.get("voice") || null, gender: gender === "all" ? null : gender,
+    speed: parseFloat(settings.get("speed")) || null, fx: settings.get("fx"),
   });
-  localStorage.setItem("voicelink", JSON.stringify({
-    headphones: els.headphones.checked, voice: els.voice.value, speed: els.speed.value,
-  }));
 }
 
 function connect() {
@@ -156,7 +211,6 @@ function handle(m) {
   switch (m.type) {
     case "ready":
       showLLM(m.llm);
-      fillVoices(m.voices, m.voice_map, m.speed);
       break;
     case "state":
       setState(micOn || m.state !== "listening" ? m.state : "muted");
@@ -181,6 +235,7 @@ function handle(m) {
     }
     case "seg":
       segInfo.set(m.turn + ":" + m.seg, { text: m.text, start: 0, end: 0 });
+      if (m.lang) lastLang = m.lang;
       break;
     case "turn_done":
       showMetrics(m.metrics);
@@ -276,27 +331,16 @@ function showMetrics(m) {
 }
 
 function showLLM(llm) {
-  els.llm.className = "pill " + (llm.ok ? "ok" : "bad");
-  els.llm.textContent = llm.ok ? `LM Studio · ${llm.model}` : "LM Studio offline";
-  els.llm.title = llm.ok ? llm.base_url : `${llm.base_url}: ${llm.error}`;
-}
-
-function fillVoices(voices, map, speed) {
-  if (els.voice.options.length <= 1) {
-    const names = { a: "US English", b: "UK English", e: "Spanish", f: "French", h: "Hindi",
-                    i: "Italian", j: "Japanese", p: "Portuguese", z: "Chinese" };
-    const groups = {};
-    for (const v of voices) (groups[v[0]] = groups[v[0]] || []).push(v);
-    for (const [k, list] of Object.entries(groups)) {
-      const og = document.createElement("optgroup");
-      og.label = names[k] || k;
-      for (const v of list) og.append(new Option(v + (Object.values(map).includes(v) ? " ★" : ""), v));
-      els.voice.append(og);
-    }
-    els.voice.value = saved.voice || "";
+  els.pill.className = "model-pill " + (llm.ok ? "ok" : "bad");
+  const name = llm.ok ? (llm.info && llm.info.name) || llm.model : "LM Studio offline";
+  let title = llm.ok ? `${llm.model} @ ${llm.base_url}` : `${llm.base_url}: ${llm.error}`;
+  if (llm.ok && llm.info) {
+    const i = llm.info;
+    title += [i.params && `\n${i.params} parameters`, i.quant && `${i.quant}`].filter(Boolean).join(" · ");
   }
-  els.speed.value = saved.speed || speed;
-  els.speedOut.textContent = (+els.speed.value).toFixed(2) + "×";
+  els.pill.innerHTML = `<span class="dot"></span><span class="name">${esc(name)}</span>` +
+    `<span class="caps">${llm.ok ? capsHTML(llm.info) : ""}</span>`;
+  els.pill.title = title;
 }
 
 async function pollStatus() {
@@ -305,6 +349,14 @@ async function pollStatus() {
     showLLM((await r.json()).llm);
   } catch (_) {}
   setTimeout(pollStatus, 10000);
+}
+
+async function loadVoices() {
+  try {
+    setCatalog(await (await fetch("/api/voices")).json());
+  } catch (_) {
+    setTimeout(loadVoices, 3000);
+  }
 }
 
 function animate() {
@@ -327,53 +379,83 @@ async function start() {
   if (started) return;
   started = true;
   setState("idle", "Starting microphone…");
-  startPlayback();
+  ensurePlayback();
   try {
     await startMic();
   } catch (e) {
     micOn = false;
-    els.mic.className = "toggle off";
-    els.mic.textContent = "No mic";
+    renderMic("none");
     addMsg("error", `Microphone unavailable (${e.message}). Text-only mode: type below.`);
   }
   connect();
   animate();
 }
 
+function renderMic(mode) {
+  els.mic.className = "round-btn " + (mode === "on" ? "on" : "off");
+  els.mic.innerHTML = icon(mode === "on" ? "mic" : "micOff");
+  els.mic.title = mode === "none" ? "No microphone" : mode === "on" ? "Mute microphone (M)" : "Unmute microphone (M)";
+}
+
 function toggleMic() {
   if (!capCtx) return;
   micOn = !micOn;
-  els.mic.className = "toggle " + (micOn ? "on" : "off");
-  els.mic.textContent = micOn ? "Mic on" : "Mic off";
+  renderMic(micOn ? "on" : "off");
   sendConfig();
   if (!micOn && state === "listening") setState("muted");
   if (micOn && state === "muted") setState("listening");
 }
 
-els.orb.onclick = () => (started ? toggleMic() : start());
-els.mic.onclick = () => started && toggleMic();
-els.stop.onclick = () => send({ type: "interrupt" });
-els.reset.onclick = () => send({ type: "reset" });
-els.headphones.onchange = sendConfig;
-els.voice.onchange = sendConfig;
-els.speed.oninput = () => { els.speedOut.textContent = (+els.speed.value).toFixed(2) + "×"; };
-els.speed.onchange = sendConfig;
-els.form.onsubmit = async (e) => {
-  e.preventDefault();
+function sendText() {
   const text = els.input.value.trim();
   if (!text) return;
-  if (!started) await start();
-  const trySend = () => {
-    if (ws && ws.readyState === WebSocket.OPEN) send({ type: "text", text });
-    else setTimeout(trySend, 200);
+  const go = async () => {
+    if (!started) await start();
+    const trySend = () => {
+      if (ws && ws.readyState === WebSocket.OPEN) send({ type: "text", text });
+      else setTimeout(trySend, 200);
+    };
+    trySend();
   };
-  trySend();
+  go();
   els.input.value = "";
-};
+  autoGrow();
+}
+
+function autoGrow() {
+  els.input.style.height = "auto";
+  els.input.style.height = Math.min(els.input.scrollHeight, 180) + "px";
+}
+
+els.orb.onclick = () => (started ? toggleMic() : start());
+els.mic.onclick = () => (started ? toggleMic() : start());
+els.stop.onclick = () => send({ type: "interrupt" });
+els.reset.onclick = () => send({ type: "reset" });
+els.form.onsubmit = (e) => { e.preventDefault(); sendText(); };
+els.input.addEventListener("input", autoGrow);
+els.input.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendText(); }
+});
 document.addEventListener("keydown", (e) => {
-  if (e.target === els.input) return;
-  if (e.key === "Escape") send({ type: "interrupt" });
+  const t = e.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) {
+    if (e.key === "Escape") t.blur();
+    return;
+  }
+  if (e.key === "Escape") { send({ type: "interrupt" }); document.activeElement?.blur(); }
   if (e.key === "m" || e.key === "M") started && toggleMic();
 });
 
+settings.onChange((paths) => {
+  const all = paths.includes("*");
+  if (all || paths.some((p) => ["voice", "gender", "speed", "headphones"].includes(p) || p.startsWith("fx"))) sendConfig();
+  if (all || paths.includes("devices.mic")) switchMic();
+  if (all || paths.includes("devices.speaker")) applySpeaker();
+});
+
+initVoicePanel({ playPreview, lang: () => lastLang });
+initProfiles();
+renderMic("on");
+refreshDevices();
+loadVoices();
 pollStatus();

@@ -4,45 +4,125 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>VoiceLink · LM Studio voice chat</title>
+  <link rel="icon" href="/favicon.ico">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <header>
+  <header class="topbar">
     <div class="brand">Voice<span>Link</span></div>
-    <div id="llmStatus" class="pill">connecting…</div>
+    <button id="modelPill" class="model-pill" type="button"><span class="dot"></span><span class="name">connecting…</span></button>
+    <div class="spacer"></div>
+
+    <nav class="toolbar" aria-label="Toolbar">
+      <button id="newChatBtn" class="icon-btn" type="button" title="New conversation"><i data-icon="plus"></i></button>
+
+      <!-- Voice & audio -->
+      <div class="tool" id="voiceTool">
+        <button class="icon-btn" type="button" title="Voice & audio settings"><i data-icon="voice"></i></button>
+        <div class="popover wide" id="voicePanel">
+          <div class="tabs">
+            <button type="button" data-tab="voice">Voice</button>
+            <button type="button" data-tab="fx">Effects</button>
+            <button type="button" data-tab="io">Devices</button>
+          </div>
+
+          <section data-pane="voice">
+            <div class="field">
+              <span class="label">Voice</span>
+              <div class="row">
+                <div class="seg" id="genderSeg" role="group" aria-label="Filter voices by gender">
+                  <button type="button" data-g="all" title="All voices"><i data-icon="all"></i></button>
+                  <button type="button" data-g="female" title="Female voices only"><i data-icon="female"></i></button>
+                  <button type="button" data-g="male" title="Male voices only"><i data-icon="male"></i></button>
+                </div>
+                <select id="voice" class="grow"></select>
+                <button id="previewBtn" class="icon-btn small" type="button" title="Play a sample of this voice"><i data-icon="play"></i></button>
+              </div>
+              <span class="hint">Grouped by language and gender, youngest-sounding first (~ age is an estimate). ★ = default voice.</span>
+            </div>
+            <label class="check" title="With headphones the echo check is skipped and barge-in is faster">
+              <input type="checkbox" id="headphones"> <i data-icon="headphones"></i> I'm using headphones
+            </label>
+            <p class="hint">Rate, pitch, age and emotion are in the Effects tab.</p>
+          </section>
+
+          <section data-pane="fx" hidden>
+            <div class="layer-title"><span>1 · Voice</span>
+              <button type="button" id="fxReset" class="link-btn" title="Reset all effects"><i data-icon="reset"></i> Reset</button>
+              <button type="button" id="fxPreview" class="icon-btn small" title="Play a sample with these effects"><i data-icon="play"></i></button>
+            </div>
+            <div class="sliders" id="fxSliders"></div>
+            <div class="layer-title"><span>2 · Age</span></div>
+            <div class="chips" id="ageChips"></div>
+            <div class="layer-title"><span>3 · Emotion</span></div>
+            <div class="chips" id="emoChips"></div>
+            <div class="sliders" id="emoSliders"></div>
+            <p class="hint">Applied to every spoken reply in this order: voice → age → emotion. Double-click a slider to reset it.</p>
+          </section>
+
+          <section data-pane="io" hidden>
+            <label class="field">
+              <span class="label"><i data-icon="mic"></i> Microphone</span>
+              <select id="micSel"></select>
+            </label>
+            <label class="field">
+              <span class="label"><i data-icon="speaker"></i> Speaker</span>
+              <select id="spkSel"></select>
+            </label>
+            <label class="check"><input type="checkbox" id="showVirtual"> Show virtual devices (voice changers, mixers, cables)</label>
+            <p class="hint" id="devHint"></p>
+          </section>
+        </div>
+      </div>
+
+      <!-- Profiles -->
+      <div class="tool" id="profileTool">
+        <button class="icon-btn" type="button" title="Settings profiles, export and import"><i data-icon="user"></i></button>
+        <div class="popover" id="profilePanel">
+          <div class="field">
+            <span class="label">Settings profile</span>
+            <select id="profileSel"></select>
+          </div>
+          <div class="btn-grid">
+            <button type="button" id="profNew"><i data-icon="copy"></i> Save as…</button>
+            <button type="button" id="profRename"><i data-icon="pencil"></i> Rename</button>
+            <button type="button" id="profReset"><i data-icon="reset"></i> Reset</button>
+            <button type="button" id="profDelete" class="danger"><i data-icon="trash"></i> Delete</button>
+            <button type="button" id="exportBtn"><i data-icon="download"></i> Export</button>
+            <button type="button" id="importBtn"><i data-icon="upload"></i> Import</button>
+          </div>
+          <input type="file" id="importFile" accept=".json,application/json" hidden>
+          <p class="hint">Changes are saved in this browser automatically to <b id="profileName"></b>.
+            Export writes every profile to a JSON file.</p>
+        </div>
+      </div>
+    </nav>
   </header>
 
-  <main>
-    <section class="stage">
-      <button id="orb" class="orb idle" title="Start">
-        <span class="ring"></span>
-        <span class="core"></span>
-      </button>
-      <div id="stateLabel" class="state-label">Click the orb to start</div>
-      <div id="metrics" class="metrics"></div>
-    </section>
+  <div class="layout">
+    <main class="center">
+      <section class="stage">
+        <button id="orb" class="orb idle" type="button" title="Start">
+          <span class="ring"></span>
+          <span class="core"></span>
+        </button>
+        <div id="stateLabel" class="state-label">Click the orb to start</div>
+        <div class="stage-buttons">
+          <button id="micBtn" class="round-btn on" type="button"></button>
+          <button id="stopBtn" class="round-btn" type="button" title="Stop the assistant (Esc)"><i data-icon="stop"></i></button>
+        </div>
+        <div id="metrics" class="metrics"></div>
+      </section>
 
-    <section id="chat" class="chat" aria-live="polite"></section>
+      <section id="chat" class="chat" aria-live="polite"></section>
 
-    <form id="textForm" class="composer" autocomplete="off">
-      <input id="textInput" placeholder="Type a message (or just talk)…">
-      <button type="submit">Send</button>
-    </form>
-  </main>
+      <form id="textForm" class="composer" autocomplete="off">
+        <textarea id="textInput" rows="1" placeholder="Type a message (or just talk)…  Enter sends, Shift+Enter adds a line"></textarea>
+        <button type="submit" class="send" title="Send"><i data-icon="send"></i></button>
+      </form>
+    </main>
+  </div>
 
-  <footer class="controls">
-    <button id="micBtn" class="toggle on" title="Mute / unmute microphone (M)">Mic on</button>
-    <button id="stopBtn" title="Stop the assistant (Esc)">Stop</button>
-    <label class="check" title="With headphones the echo check is skipped and barge-in is faster">
-      <input type="checkbox" id="headphones"> Headphones
-    </label>
-    <label>Voice
-      <select id="voice"><option value="">Auto (by language)</option></select>
-    </label>
-    <label>Speed <input type="range" id="speed" min="0.7" max="1.5" step="0.05"> <output id="speedOut"></output></label>
-    <button id="resetBtn" title="Forget the conversation">New chat</button>
-  </footer>
-
-  <script src="/static/app.js"></script>
+  <script type="module" src="/static/js/main.js"></script>
 </body>
 </html>

@@ -113,6 +113,8 @@ class Session:
         self.lang = (self.langs or ["en"])[0]
         self.headphones = False
         self.voice = None
+        self.gender = None
+        self.fx = None
         self.speed = None
         self.mic_on = True
         self.pcm = np.zeros(0, dtype=np.float32)
@@ -190,6 +192,10 @@ class Session:
                 self.headphones = bool(msg["headphones"])
             if "voice" in msg:
                 self.voice = msg["voice"] or None
+            if "gender" in msg:
+                self.gender = msg["gender"] if msg["gender"] in ("male", "female") else None
+            if "fx" in msg:
+                self.fx = msg["fx"] if isinstance(msg["fx"], dict) else None
             if "speed" in msg:
                 self.speed = float(msg["speed"]) if msg["speed"] else None
             if "mic" in msg:
@@ -551,8 +557,8 @@ class Session:
                 turn.lang = detect_language(speech, self.langs, default=turn.user_lang or self.lang)
                 self.lang = turn.lang
             t0 = now()
-            audio = await loop.run_in_executor(self.eng.tts_pool, self.eng.tts.synthesize,
-                                               speech, turn.lang, self.voice, self.speed)
+            audio = await loop.run_in_executor(self.eng.tts_pool, self.eng.tts.speak, speech, turn.lang,
+                                               self.voice, self.speed, self.gender, self.fx)
             if not len(audio):
                 continue
             log.debug("turn %d seg %d: %.0f ms for %.2fs audio: %r", turn.id, seg,
