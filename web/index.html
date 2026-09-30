@@ -9,6 +9,7 @@
 </head>
 <body>
   <header class="topbar">
+    <button id="toggleLeft" class="icon-btn" type="button" title="Conversations"><i data-icon="panelLeft"></i></button>
     <div class="brand">Voice<span>Link</span></div>
     <button id="modelPill" class="model-pill" type="button"><span class="dot"></span><span class="name">connecting…</span></button>
     <div class="spacer"></div>
@@ -96,10 +97,17 @@
             Export writes every profile to a JSON file.</p>
         </div>
       </div>
+      <button id="toggleRight" class="icon-btn" type="button" title="Model settings"><i data-icon="panelRight"></i></button>
     </nav>
   </header>
 
   <div class="layout">
+    <aside id="leftPanel" class="side left" aria-label="Conversations">
+      <button id="newChatSide" class="new-chat" type="button"><i data-icon="plus"></i> New chat</button>
+      <div class="search"><i data-icon="search"></i><input id="convSearch" type="text" placeholder="Search conversations"></div>
+      <div id="convList" class="conv-list"></div>
+    </aside>
+
     <main class="center">
       <section class="stage">
         <button id="orb" class="orb idle" type="button" title="Start">
@@ -121,6 +129,43 @@
         <button type="submit" class="send" title="Send"><i data-icon="send"></i></button>
       </form>
     </main>
+
+    <aside id="rightPanel" class="side right" aria-label="Model settings">
+      <div class="side-title"><i data-icon="chip"></i> Model
+        <button id="modelRefresh" class="icon-btn small" type="button" title="Refresh the model list"><i data-icon="refresh"></i></button>
+      </div>
+      <div id="modelCard" class="card"></div>
+
+      <details class="card" id="modelSwitch">
+        <summary>Change model <span id="modelCount" class="hint"></span></summary>
+        <div class="search"><i data-icon="search"></i><input id="modelSearch" type="text" placeholder="Filter downloaded models"></div>
+        <div id="modelList" class="model-list"></div>
+      </details>
+
+      <div class="card">
+        <div class="card-title">Load settings · <span id="loadTarget"></span></div>
+        <label class="gen-field"><span>Context length <small id="ctxMax" class="hint"></small></span>
+          <input type="number" id="ctxLen" min="512" step="512"></label>
+        <label class="check"><input type="checkbox" id="flashAttn"> Flash attention (less VRAM for long contexts)</label>
+        <button id="loadBtn" class="wide-btn" type="button">Reload with these settings</button>
+        <p class="hint">Loading replaces the chat model in LM Studio. Bigger contexts use more VRAM.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-title">System prompt <span id="sysState" class="tag"></span>
+          <button id="sysDefault" class="link-btn" type="button" title="Use the default from config.json">Use default</button></div>
+        <textarea id="sysPrompt" rows="6"></textarea>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Generation
+          <button id="genReset" class="link-btn" type="button" title="Use the defaults from config.json"><i data-icon="reset"></i> Defaults</button></div>
+        <div id="genFields" class="gen-fields"></div>
+        <label class="check" id="thinkingRow"><input type="checkbox" id="thinking"> Let the model think first</label>
+        <p class="hint">Thinking makes the first word slower and is never spoken.
+          Empty fields use config.json. Settings apply from the next reply and are saved in the current profile.</p>
+      </div>
+    </aside>
   </div>
 
   <script type="module" src="/static/js/main.js"></script>

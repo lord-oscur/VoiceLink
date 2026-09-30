@@ -49,6 +49,32 @@ def now():
     return time.perf_counter()
 
 
+def _ts():
+    return time.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+_GEN_KEYS = {"temperature": (0.0, 2.0), "top_p": (0.0, 1.0), "top_k": (0, 500), "repeat_penalty": (0.5, 2.0),
+             "max_tokens": (16, 32768), "history": (2, 400)}
+
+
+def _clean_gen(gen):
+    """Per-request LLM settings from the model panel; unset values use config.json."""
+    out = {}
+    for key, (lo, hi) in _GEN_KEYS.items():
+        v = gen.get(key)
+        if v is None or v == "":
+            continue
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            continue
+        v = min(hi, max(lo, v))
+        out[key] = int(v) if key in ("top_k", "max_tokens", "history") else v
+    if gen.get("thinking") is not None:
+        out["thinking"] = bool(gen["thinking"])
+    return out
+
+
 class Turn:
     def __init__(self, tid, audio=None, text=None, speech_end=None):
         self.id = tid
@@ -109,6 +135,10 @@ class Session:
         self.vad = SileroVAD(engines.vad_file)
         self.out = asyncio.Queue()
         self.history = []
+        self.conv_id = None
+        self.titled = False
+        self.gen = {}
+        self.system_prompt = None
         self.langs = self.cfg["stt"]["languages"] or None
         self.lang = (self.langs or ["en"])[0]
         self.headphones = False
@@ -202,6 +232,10 @@ class Session:
                 self.mic_on = bool(msg["mic"])
                 if not self.mic_on:
                     self._abort_speech()
+            if "gen" in msg and isinstance(msg["gen"], dict):
+                self.gen = _clean_gen(msg["gen"])
+            if "system_prompt" in msg:
+                self.system_prompt = (msg["system_prompt"] or "").strip() or None
         elif kind == "text":
             text = (msg.get("text") or "").strip()
             if text:
@@ -220,8 +254,24 @@ class Session:
         elif kind == "reset":
             self._interrupt("reset")
             self._cancel_spec()
-            self.history.clear()
+            self.history = []
+            self.conv_id = None
+            self.titled = False
             self.send({"type": "reset_done"})
+            self._refresh_state()
+        elif kind == "open":
+            try:
+                conv = self.eng.store.get(msg.get("id"))
+            except (KeyError, OSError, ValueError):
+                self.send({"type": "error", "message": "That conversation no longer exists."})
+                return
+            self._interrupt("open conversation")
+            self._cancel_spec()
+            self.history = conv.get("messages", [])
+            self.conv_id = conv["id"]
+            self.titled = True
+            self.send({"type": "conversation", "id": conv["id"], "title": conv.get("title"),
+                       "messages": self.history})
             self._refresh_state()
 
     def on_audio(self, data):
@@ -453,29 +503,67 @@ class Session:
         self._store_assistant(t, (heard + " —") if heard else "")
 
     def _store_assistant(self, turn, text):
-        if turn.hist_idx is not None:
+        if turn.hist_idx is not None and turn.hist_idx < len(self.history):
             if text:
                 self.history[turn.hist_idx]["content"] = text
             else:
                 self.history.pop(turn.hist_idx)
                 turn.hist_idx = None
         elif text:
-            self.history.append({"role": "assistant", "content": text})
+            self.history.append({"role": "assistant", "content": text, "ts": _ts()})
             turn.hist_idx = len(self.history) - 1
+        self._persist()
+        if text and not turn.interrupted and not self.titled and self.cfg["llm"].get("auto_title", True):
+            self.titled = True
+            asyncio.create_task(self._auto_title(self.conv_id))
+
+    def _persist(self):
+        if not self.history:
+            return
+        if not self.conv_id:
+            self.conv_id = self.eng.store.new_id()
+        try:
+            conv = self.eng.store.save(self.conv_id, self.history, model=self.eng.llm.model)
+        except OSError as e:
+            log.warning("Could not save the conversation: %s", e)
+            return
+        self.send({"type": "conv_saved", "id": conv["id"], "title": conv["title"]})
+
+    async def _auto_title(self, cid):
+        """Names a new conversation after its first exchange (in the background)."""
+        convo = "\n".join(f"{m['role']}: {m['content'][:400]}" for m in self.history[:2])
+        prompt = [{"role": "system", "content": "You write very short titles for chat conversations."},
+                  {"role": "user", "content": "Write a title of 2 to 6 words, in the language of the "
+                   "conversation, for this exchange. Reply with the title only, no quotes.\n\n" + convo}]
+        try:
+            title = await self.eng.llm.complete(prompt, max_tokens=24, temperature=0.3)
+        except Exception as e:
+            log.debug("Auto title failed: %s", e)
+            return
+        title = title.strip().strip("\"'«»“”*#.").splitlines()[0].strip() if title.strip() else ""
+        if not title or cid is None or cid != self.conv_id:
+            return
+        try:
+            conv = self.eng.store.rename(cid, title[:80])
+        except (KeyError, OSError, ValueError):
+            return
+        self.send({"type": "conv_saved", "id": cid, "title": conv["title"]})
 
     def _history_with_user(self, text):
         hist = [dict(m) for m in self.history]
         if hist and hist[-1]["role"] == "user":
             hist[-1]["content"] += " " + text
         else:
-            hist.append({"role": "user", "content": text})
+            hist.append({"role": "user", "content": text, "ts": _ts()})
         return hist
 
     def _messages(self, hist):
-        keep = hist[-int(self.cfg["llm"]["history_messages"]):]
+        limit = int(self.gen.get("history") or self.cfg["llm"]["history_messages"])
+        keep = hist[-limit:]
         while keep and keep[0]["role"] != "user":
             keep = keep[1:]
-        return [{"role": "system", "content": self.cfg["llm"]["system_prompt"]}] + keep
+        system = self.system_prompt or self.cfg["llm"]["system_prompt"]
+        return [{"role": "system", "content": system}] + [{"role": m["role"], "content": m["content"]} for m in keep]
 
     async def _run_turn(self, turn):
         try:
@@ -509,7 +597,7 @@ class Session:
             chunker = SentenceChunker(tc["first_chunk_min_chars"], tc["chunk_max_chars"],
                                       tc["first_chunk_wait_ms"] / 1000.0)
             t0 = now()
-            async for delta in self.eng.llm.stream(messages):
+            async for delta in self.eng.llm.stream(messages, self.gen):
                 if "ttft_ms" not in turn.metrics:
                     turn.metrics["ttft_ms"] = round((now() - t0) * 1000)
                 turn.emit({"type": "assistant_delta", "turn": turn.id, "text": delta})
@@ -580,6 +668,7 @@ class Session:
         if turn.cancelled:
             return
         self.history = self._history_with_user(turn.user_text.strip())
+        self._persist()
         log.info("User (turn %d): %r", turn.id, turn.user_text.strip())
         self.send({"type": "user", "turn": turn.id, "text": turn.user_text.strip(),
                    "stt_ms": turn.metrics.get("stt_ms")})

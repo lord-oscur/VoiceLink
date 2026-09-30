@@ -19,8 +19,8 @@ updated as each item lands.
 | 9 | Pitch, rate, timbre and volume controls applied after TTS generation. | done |
 | 10 | Voice-age layer: Child 2–5, Preteen 8–12, Teen 13–19, Adult 20–50, Mature 50–70, Senior 70+ (base voices sound 20–30). | done |
 | 11 | Emotion layer on top (order: normal audio → age → emotion). | done |
-| 12 | Chat history on the left: stored conversations. | pending |
-| 13 | Model settings on the right: system prompt, context, etc., even for a model loaded through the API. | pending |
+| 12 | Chat history on the left: stored conversations. | done |
+| 13 | Model settings on the right: system prompt, context, etc., even for a model loaded through the API. | done |
 | 14 | Attach files to the chat according to the model's capabilities (images, audio, video, documents). | pending |
 | 15 | Spell check and grammar check in the text box, with coloured underlines, replacement suggestions, and a redundancy checker. | pending |
 | 16 | STT noise filter (PC fans, ambient sound). | pending |

@@ -17,7 +17,8 @@ from aiohttp import web
 
 from . import __version__
 from .config import ROOT, load_config, model_path
-from .llm import LMStudioClient
+from .history import ConversationStore
+from .llm import LLMError, LMStudioClient
 from .session import Session
 
 log = logging.getLogger("server")
@@ -69,6 +70,7 @@ class Engines:
         self.tts_pool = ThreadPoolExecutor(1, thread_name_prefix="tts")
         self.stt = SpeechToText(cfg["stt"])
         self.tts = TextToSpeech(cfg["tts"])
+        self.store = ConversationStore()
         self.llm = None
 
 
@@ -97,6 +99,69 @@ async def status(request):
         "speed": eng.tts.speed,
         "languages": eng.cfg["stt"]["languages"],
     })
+
+
+async def llm_defaults(request):
+    c = request.app["engines"].cfg["llm"]
+    return web.json_response({k: c.get(k) for k in (
+        "system_prompt", "temperature", "top_p", "top_k", "repeat_penalty", "max_tokens",
+        "history_messages", "disable_thinking")})
+
+
+async def models_list(request):
+    llm = request.app["engines"].llm
+    try:
+        models = await llm.models()
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e) or type(e).__name__, "models": []})
+    models = [m for m in models if m["type"] in ("llm", "vlm", None)]
+    return web.json_response({"ok": True, "current": llm.model, "models": models})
+
+
+async def models_load(request):
+    llm = request.app["engines"].llm
+    body = await request.json()
+    if not body.get("key"):
+        raise web.HTTPBadRequest(text="key is required")
+    log.info("Loading model %s (context %s, flash attention %s)...", body["key"],
+             body.get("context_length"), body.get("flash_attention"))
+    t = time.perf_counter()
+    try:
+        result = await llm.load(body["key"], body.get("context_length"), body.get("flash_attention"))
+    except (LLMError, aiohttp.ClientError, asyncio.TimeoutError) as e:
+        log.warning("Model load failed: %s", e)
+        return web.json_response({"ok": False, "error": str(e) or type(e).__name__})
+    log.info("Model %s loaded in %.1fs", llm.model, time.perf_counter() - t)
+    (result.get("load_config") or {}).pop("prompt_template", None)
+    return web.json_response({"ok": True, "result": result, "status": await llm.status()})
+
+
+async def conv_list(request):
+    return web.json_response(request.app["engines"].store.list())
+
+
+async def conv_get(request):
+    try:
+        return web.json_response(request.app["engines"].store.get(request.match_info["cid"]))
+    except (KeyError, OSError, ValueError):
+        raise web.HTTPNotFound()
+
+
+async def conv_patch(request):
+    body = await request.json()
+    try:
+        conv = request.app["engines"].store.rename(request.match_info["cid"], body.get("title"))
+    except (KeyError, OSError, ValueError):
+        raise web.HTTPNotFound()
+    return web.json_response({"id": conv["id"], "title": conv["title"]})
+
+
+async def conv_delete(request):
+    try:
+        request.app["engines"].store.delete(request.match_info["cid"])
+    except (KeyError, OSError):
+        raise web.HTTPNotFound()
+    return web.json_response({"ok": True})
 
 
 async def voices(request):
@@ -197,6 +262,13 @@ def main():
     app.router.add_get("/api/status", status)
     app.router.add_get("/api/voices", voices)
     app.router.add_post("/api/preview", preview)
+    app.router.add_get("/api/llm_defaults", llm_defaults)
+    app.router.add_get("/api/models", models_list)
+    app.router.add_post("/api/models/load", models_load)
+    app.router.add_get("/api/conversations", conv_list)
+    app.router.add_get("/api/conversations/{cid}", conv_get)
+    app.router.add_patch("/api/conversations/{cid}", conv_patch)
+    app.router.add_delete("/api/conversations/{cid}", conv_delete)
     app.router.add_get("/ws", ws_handler)
     app.router.add_static("/static/", WEB_DIR)
 

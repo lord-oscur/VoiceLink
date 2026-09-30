@@ -33,6 +33,7 @@ DEFAULTS = {
         "max_tokens": 512,
         "disable_thinking": True,
         "history_messages": 40,
+        "auto_title": True,  # name new conversations with the LLM after the first reply
         "system_prompt": DEFAULT_SYSTEM_PROMPT,
     },
     "stt": {

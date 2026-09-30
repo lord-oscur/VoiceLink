@@ -1,6 +1,8 @@
 // VoiceLink browser client: microphone capture, audio playback and UI.
 // All speech processing happens on the Python server over one WebSocket.
+import * as history from "./history.js";
 import { hydrateIcons, icon } from "./icons.js";
+import { initModelPanel, panelOpened, setStatus } from "./modelpanel.js";
 import { initProfiles } from "./profiles.js";
 import { settings } from "./settings.js";
 import { $, capsHTML, esc, toast } from "./ui.js";
@@ -185,10 +187,14 @@ function send(obj) {
 
 function sendConfig() {
   const gender = settings.get("gender");
+  const m = settings.get("model");
   send({
     type: "config", headphones: !!settings.get("headphones"), mic: micOn,
     voice: settings.get("voice") || null, gender: gender === "all" ? null : gender,
     speed: parseFloat(settings.get("speed")) || null, fx: settings.get("fx"),
+    system_prompt: m.systemPrompt || null,
+    gen: { temperature: m.temperature, top_p: m.top_p, top_k: m.top_k, repeat_penalty: m.repeat_penalty,
+           max_tokens: m.max_tokens, history: m.history, thinking: !!m.thinking },
   });
 }
 
@@ -197,7 +203,7 @@ function connect() {
   ws.binaryType = "arraybuffer";
   ws.onopen = () => { reconnectDelay = 500; sendConfig(); };
   ws.onclose = () => {
-    setState("idle", "Disconnected from server — retrying…");
+    if (started) setState("idle", "Disconnected from server — retrying…");
     setTimeout(connect, reconnectDelay);
     reconnectDelay = Math.min(reconnectDelay * 2, 5000);
   };
@@ -213,6 +219,7 @@ function handle(m) {
       showLLM(m.llm);
       break;
     case "state":
+      if (!started) break;
       setState(micOn || m.state !== "listening" ? m.state : "muted");
       if (m.state !== "user_speaking") clearPartial();
       break;
@@ -244,9 +251,21 @@ function handle(m) {
     case "unduck": duck(false); break;
     case "stop": stopPlayback(m.turn); break;
     case "reset_done":
-      els.chat.innerHTML = "";
-      bubbles.clear();
+      clearChat();
       addMsg("system", "New conversation");
+      history.setActive(null);
+      break;
+    case "conversation":
+      clearChat();
+      for (const msg of m.messages) {
+        const el = addMsg(msg.role === "user" ? "user" : "assistant", msg.content);
+        if (msg.role === "assistant" && /\s—$/.test(msg.content)) el.classList.add("interrupted");
+      }
+      addMsg("system", `Continuing “${m.title}”`);
+      history.setActive(m.id);
+      break;
+    case "conv_saved":
+      history.saved(m.id, m.title);
       break;
     case "error":
       addMsg("error", m.message);
@@ -269,6 +288,12 @@ function addMsg(role, text) {
   els.chat.appendChild(el);
   scrollChat();
   return el;
+}
+
+function clearChat() {
+  els.chat.innerHTML = "";
+  bubbles.clear();
+  partialEl = null;
 }
 
 function bubble(turn) {
@@ -340,7 +365,8 @@ function showLLM(llm) {
   }
   els.pill.innerHTML = `<span class="dot"></span><span class="name">${esc(name)}</span>` +
     `<span class="caps">${llm.ok ? capsHTML(llm.info) : ""}</span>`;
-  els.pill.title = title;
+  els.pill.title = title + "\nClick for model settings";
+  setStatus(llm);
 }
 
 async function pollStatus() {
@@ -387,7 +413,11 @@ async function start() {
     renderMic("none");
     addMsg("error", `Microphone unavailable (${e.message}). Text-only mode: type below.`);
   }
-  connect();
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    sendConfig();
+    setState(micOn ? "listening" : "muted");
+  }
+  ensureSocket();
   animate();
 }
 
@@ -430,7 +460,7 @@ function autoGrow() {
 els.orb.onclick = () => (started ? toggleMic() : start());
 els.mic.onclick = () => (started ? toggleMic() : start());
 els.stop.onclick = () => send({ type: "interrupt" });
-els.reset.onclick = () => send({ type: "reset" });
+els.reset.onclick = newChat;
 els.form.onsubmit = (e) => { e.preventDefault(); sendText(); };
 els.input.addEventListener("input", autoGrow);
 els.input.addEventListener("keydown", (e) => {
@@ -446,15 +476,53 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "m" || e.key === "M") started && toggleMic();
 });
 
+// Opening a conversation or starting a new one works before the voice session
+// is started too: the WebSocket connects first, without the microphone.
+function ensureSocket() {
+  if (!ws) connect();
+}
+
+function whenOpen(fn) {
+  ensureSocket();
+  if (ws.readyState === WebSocket.OPEN) fn();
+  else setTimeout(() => whenOpen(fn), 150);
+}
+
+function newChat() { whenOpen(() => send({ type: "reset" })); }
+function openConversation(id) { whenOpen(() => send({ type: "open", id })); }
+
+function applyPanels() {
+  const left = !!settings.ui("left"), right = !!settings.ui("right");
+  $("leftPanel").hidden = !left;
+  $("rightPanel").hidden = !right;
+  $("toggleLeft").classList.toggle("active", left);
+  $("toggleRight").classList.toggle("active", right);
+  if (right) panelOpened();
+}
+
+function togglePanel(side) {
+  settings.setUI(side, !settings.ui(side));
+  applyPanels();
+}
+
+$("toggleLeft").onclick = () => togglePanel("left");
+$("toggleRight").onclick = () => togglePanel("right");
+els.pill.onclick = () => togglePanel("right");
+
 settings.onChange((paths) => {
   const all = paths.includes("*");
-  if (all || paths.some((p) => ["voice", "gender", "speed", "headphones"].includes(p) || p.startsWith("fx"))) sendConfig();
+  if (all || paths.some((p) => ["voice", "gender", "speed", "headphones"].includes(p) ||
+                               p.startsWith("fx") || p.startsWith("model"))) sendConfig();
   if (all || paths.includes("devices.mic")) switchMic();
   if (all || paths.includes("devices.speaker")) applySpeaker();
 });
 
 initVoicePanel({ playPreview, lang: () => lastLang });
 initProfiles();
+history.initHistory({ newChat, open: openConversation });
+initModelPanel({ statusChanged: (llm) => { if (llm) showLLM(llm); else pollStatus(); } });
+applyPanels();
+ensureSocket();
 renderMic("on");
 refreshDevices();
 loadVoices();
