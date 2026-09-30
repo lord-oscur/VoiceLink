@@ -58,14 +58,31 @@ needed.
 * **Talk**: the orb pulses green while you speak. About 0.8 s after you
   stop, the reply starts (the answer is already being prepared after
   0.25 s of silence, see below).
+* **Languages**: English is always on. A second language (Spanish, French,
+  Italian, Portuguese, Hindi, Japanese or Chinese) is chosen from this PC's
+  display language or time zone. The voice list puts that language next to
+  English.
 * **Interrupt**: just speak. The reply drops in volume immediately and stops
   once your speech is confirmed. The part of the reply you did not hear is
   struck through in the chat, and the model is told where it was cut off.
 * **Type** instead of talking in the box below the chat (also interrupts).
-* **Esc** stops the assistant, **M** mutes the mic, **New chat** clears the
-  history. Voice and speed are remembered by the browser.
-* The header pill shows the LM Studio status and the loaded model. The
-  small line under the orb shows timings for the last turn.
+  Spelling, grammar and redundancy are underlined; click a word for
+  suggestions. Optional **Check with AI** uses the loaded model.
+* **Esc** stops the assistant, **M** mutes the mic. Conversations are stored
+  on disk (left panel). Voice, devices and effects are saved in this browser
+  (profiles, export/import in the person icon).
+* The header pill shows the loaded model plus icons for thinking, tools and
+  vision. The right panel has the system prompt, context length and
+  generation settings (including reload/switch in LM Studio).
+* The **voice icon** (top right) opens Voice, Effects (pitch/age/emotion)
+  and Devices (microphone, speaker, fan-noise filter, ignore-PC-playback,
+  only-my-voice).
+* Paperclip attaches files the model can actually use (images if it has
+  vision, documents as text, audio/video transcribed).
+
+After `setup.bat`, VoiceLink itself runs **offline**. It only talks to LM
+Studio on this PC (`http://127.0.0.1:1234`). Unplug the network and it still
+works; `setup.bat` is the step that needs the internet.
 
 ---
 
@@ -123,14 +140,14 @@ empty-think prefill and remembers which method works. `<think>` blocks are
 also filtered out of the speech. Set `llm.disable_thinking` to `false` to
 allow thinking.
 
-**Languages.** Parakeet recognizes 25 European languages automatically.
-The reply voice follows the language of the reply text: English, Spanish,
-French, Italian and Portuguese are detected; Hindi, Japanese and Chinese
-voices can be chosen manually. When your language is clear,
-"(Reply in Spanish.)" is appended to your message in the request, because
-small models often drift into the wrong language. `stt.languages` limits
-detection to the languages you actually use (default `["en", "es"]`; use
-`[]` for all five).
+**Languages.** English is always first. A second language is taken from the
+PC's OS locale, then its time zone, then the browser geolocation if that
+permission was already granted (no prompt, no network). Parakeet recognizes
+25 European languages automatically. The reply voice follows the language of
+the reply text; Hindi, Japanese and Chinese voices can be chosen manually.
+When your language is clear, "(Reply in Spanish.)" is appended to your
+message, because small models often drift into the wrong language. The
+browser sends `stt.languages` as `["en"]` or `["en", second]`.
 
 ---
 
@@ -157,6 +174,7 @@ keys you change; missing keys fall back to the defaults. Restart
 | `max_tokens` | `512` | Upper bound for one reply. |
 | `disable_thinking` | `true` | Turn reasoning off for fast replies (see above). |
 | `history_messages` | `40` | How many past messages are sent with each request. |
+| `auto_title` | `true` | Name new conversations with the LLM after the first reply. |
 | `system_prompt` | voice-oriented prompt | Keep the parts about "no markdown" and the em dash. |
 
 ### `stt` (speech recognition, NVIDIA Parakeet TDT 0.6B v3)
@@ -165,9 +183,10 @@ keys you change; missing keys fall back to the defaults. Restart
 | `model`, `model_dir`, `quantization` | Parakeet, `int8` | Model id for `onnx-asr`, folder under `models/`, and its weights. |
 | `device` | `cpu` | `cpu` or `cuda` (needs `setup.bat gpu`). |
 | `cpu_threads` | `4` | ONNX Runtime threads. |
-| `languages` | `["en","es"]` | Languages to detect for the reply hint and the voice (subset of `en es fr it pt`, `[]` = all). |
+| `languages` | `["en"]` | English plus an optional second language. The browser fills the second from the PC locale / time zone (or geolocation if already allowed). |
 | `live_transcript` | `true` | Show what you are saying while you speak. |
 | `live_interval_ms` | `1000` | How often the live transcript updates. |
+| `noise_filter` | `light` | `off`, `light` or `strong`. Spectral filter for fans and hum, before VAD/STT. |
 
 ### `tts` (speech synthesis, Kokoro-82M)
 | Key | Default | Meaning |
@@ -176,7 +195,8 @@ keys you change; missing keys fall back to the defaults. Restart
 | `model_file`, `voices_file` | `kokoro/kokoro-v1.0.onnx`, `kokoro/voices-v1.0.bin` | Under `models/`. |
 | `cpu_threads` | `4` | Four threads each for TTS and STT on an 8-thread CPU. |
 | `speed` | `1.05` | Default speaking rate (the page slider overrides it per browser). |
-| `voices` | `af_heart`, `ef_dora`, `ff_siwis`, `if_sara`, `pf_dora`, `hf_alpha` | Voice used for each language when *Voice* is "Auto". All 54 Kokoro voices are listed in the page. |
+| `voices` | `af_heart`, `ef_dora`, … | Voice used for each language when *Voice* is "Auto". |
+| `voices_male` | `am_michael`, `em_alex`, … | Auto voice when the gender filter is Male. |
 | `first_chunk_min_chars` | `12` | Shortest clause that may be spoken as the first piece. |
 | `first_chunk_wait_ms` | `600` | After this long without a clause break, speak the words received so far. |
 | `chunk_max_chars` | `220` | Longest piece sent to TTS. |
@@ -251,7 +271,8 @@ JSON.
 | Replies appear as text but there is **no sound** | Chrome is probably muted in the Windows **Volume Mixer** (right-click the speaker icon > *Open Volume mixer*), or Windows is sending sound to a device you are not listening to. Run **`soundcheck.bat`** and make VoiceLink speak within 20 s. It unmutes Chrome/Edge and shows each app's level per device. Then reload the page. |
 | Header says **LM Studio offline** | Start the server in LM Studio (Developer tab) and load a model. VoiceLink reconnects by itself. |
 | **"already running"** on start | Another VoiceLink is using port 8765: close its window, or change `server.port`. |
-| The assistant stops for **background sounds** (TV, videos) | Browsers only cancel the page's own audio, not other apps. Pause other audio, use headphones, or raise `barge_in_ms`. |
+| The assistant stops for **background sounds** (TV, videos) | **Ignore speech playing on this PC** is on by default (voice panel → Devices). It listens to what the speakers play so a video does not start a turn. Untick it if you need the microphone to hear that. For people in the room or a TV, tick **Only my voice** and record 10 seconds. Headphones still help. |
+| **PC fan / AC** keeps triggering listening | Voice panel → Devices → Background noise filter **Strong**. |
 | It **interrupts itself** on speakers | Use Chrome (Edge and Firefox cancel less echo), lower the speaker volume, or use headphones. |
 | **No microphone** prompt / "text-only mode" | Allow the mic for `127.0.0.1` in the browser's site settings, and open the page via `http://127.0.0.1:8765` (not a LAN IP). |
 | **Cuts you off** when you pause | Raise `vad.end_silence_ms`. |
@@ -280,9 +301,11 @@ voicelink/
   gpu.py        CUDA/CPU execution-provider selection
   config.py     defaults and config loading
 web/            browser client (no build step, no external scripts)
-tools/          model download, end-to-end self-test, benchmarks
+tools/          model download, end-to-end self-test, filter tests, benchmarks
 models/         downloaded models (not part of the source)
+data/           saved conversations
 docs/DEVELOPMENT.md   design decisions, benchmarks and test results
+changes_v1.md   v1 feature list and implementation notes
 ```
 
 Models: [Silero VAD](https://github.com/snakers4/silero-vad) (MIT),

@@ -7,3 +7,5 @@ praat-parselmouth>=0.4.4,<0.5
 pypdf>=5,<7
 python-docx>=1.1,<2
 pyspellchecker>=0.8,<0.10
+soundcard>=0.4.3,<0.5
+sherpa-onnx>=1.10,<2

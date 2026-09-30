@@ -40,6 +40,7 @@
                 <button id="previewBtn" class="icon-btn small" type="button" title="Play a sample of this voice"><i data-icon="play"></i></button>
               </div>
               <span class="hint">Grouped by language and gender, youngest-sounding first (~ age is an estimate). ★ = default voice.</span>
+              <span class="hint" id="langHint"></span>
             </div>
             <label class="check" title="With headphones the echo check is skipped and barge-in is faster">
               <input type="checkbox" id="headphones"> <i data-icon="headphones"></i> I'm using headphones
@@ -72,6 +73,38 @@
             </label>
             <label class="check"><input type="checkbox" id="showVirtual"> Show virtual devices (voice changers, mixers, cables)</label>
             <p class="hint" id="devHint"></p>
+
+            <div class="layer-title"><span><i data-icon="shield"></i> Microphone filters</span></div>
+            <div class="field">
+              <span class="label">Background noise filter</span>
+              <div class="seg text" id="noiseSeg" role="group" aria-label="Background noise filter">
+                <button type="button" data-v="off">Off</button>
+                <button type="button" data-v="light">Light</button>
+                <button type="button" data-v="strong">Strong</button>
+              </div>
+              <span class="hint">Removes steady noise (fans, hum, air conditioning) before speech is detected. Use Strong next to a loud fan.</span>
+            </div>
+            <label class="check"><input type="checkbox" id="pbGate"> Ignore speech playing on this PC (videos, calls, music)</label>
+            <label class="field sub" id="loopRow">
+              <span class="label">Sound comes out of</span>
+              <select id="loopSel"></select>
+            </label>
+            <span class="hint" id="pbHint">Compares what the microphone hears with what the PC is playing, so a video does not start a turn. Not needed with headphones.</span>
+
+            <label class="check"><input type="checkbox" id="onlyMe"> Only my voice</label>
+            <div class="sub" id="onlyMeBox">
+              <div class="row">
+                <button type="button" id="enrollBtn" class="wide-btn grow"><i data-icon="mic"></i> <span>Record my voice (10 s)</span></button>
+              </div>
+              <div id="enrollRun" class="enroll" hidden>
+                <span class="hint">Read this aloud in your normal voice:</span>
+                <blockquote id="enrollText"></blockquote>
+                <div class="bar"><i id="enrollBar"></i></div>
+                <button type="button" id="enrollCancel" class="link-btn">Cancel</button>
+              </div>
+              <div class="sliders" id="onlyMeSlider"></div>
+              <p class="hint" id="onlyMeHint"></p>
+            </div>
           </section>
         </div>
       </div>

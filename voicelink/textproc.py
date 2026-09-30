@@ -214,7 +214,10 @@ _STOP = {k: set(v.split()) for k, v in _STOPWORDS.items()}
 _WORD = re.compile(r"[a-záéíóúüñàèìòùâêîôûçãõœ']+", re.I)
 
 
-LANGUAGE_NAMES = {"en": "English", "es": "Spanish", "fr": "French", "it": "Italian", "pt": "Portuguese"}
+LANGUAGE_NAMES = {
+    "en": "English", "es": "Spanish", "fr": "French", "it": "Italian", "pt": "Portuguese",
+    "hi": "Hindi", "ja": "Japanese", "zh": "Chinese",
+}
 
 
 def _scores(text, allowed):

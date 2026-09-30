@@ -6,7 +6,7 @@
 // Settings are deep-merged with DEFAULTS on read, so new keys appear automatically.
 
 const KEY = "voicelink.settings";
-const VERSION = 2;
+const VERSION = 3;
 
 export const DEFAULTS = {
   voice: "",                 // "" = automatic voice for the reply's language
@@ -15,12 +15,16 @@ export const DEFAULTS = {
   headphones: false,
   devices: { mic: "", speaker: "", showVirtual: false },
   fx: { pitch: 0, timbre: 0, range: 100, volume: 0, age: "adult", emotion: "none", intensity: 60 },
-  input: { noise: "off", playbackGate: false, onlyMe: false },
+  input: {
+    noise: "light", playbackGate: true, loopback: "",
+    onlyMe: false, onlyMeStrict: 50, voiceprint: null, voiceprintDate: "",
+  },
   model: {
     systemPrompt: "", temperature: null, top_p: null, top_k: null, repeat_penalty: null,
     max_tokens: null, thinking: false, history: null,
   },
   editor: { check: true, lang: "auto" },
+  languages: { second: "", source: "", manual: false },
 };
 
 const UI_DEFAULTS = { left: true, right: false, voiceTab: "voice" };
@@ -64,6 +68,12 @@ function load() {
   if (!data.profiles[data.active]) data.active = Object.keys(data.profiles)[0] || "Default";
   if (!data.profiles[data.active]) data.profiles[data.active] = {};
   data.ui = merge(UI_DEFAULTS, data.ui);
+  if ((data.version || 0) < 3) {
+    for (const p of Object.values(data.profiles)) {
+      if (isObj(p) && isObj(p.input)) p.input.playbackGate = true;
+    }
+    data.version = VERSION;
+  }
   return data;
 }
 

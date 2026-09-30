@@ -1,4 +1,5 @@
 // Voice & audio hover panel: voice choice, speed, devices (and effects).
+import { languageHint } from "./locale.js";
 import { canPickSpeaker, fillSelect, listDevices } from "./devices.js";
 import { settings } from "./settings.js";
 import { $, toast } from "./ui.js";
@@ -7,8 +8,17 @@ const GROUPS = [
   ["a", "English (US)"], ["b", "English (UK)"], ["e", "Spanish"],
   ["f", "French"], ["i", "Italian"], ["p", "Portuguese (BR)"], ["h", "Hindi"], ["j", "Japanese"], ["z", "Chinese"],
 ];
-const MAIN = new Set(["a", "b", "e"]);   // English and Spanish first
+const GROUP_LANG = { a: "en", b: "en", e: "es", f: "fr", i: "it", p: "pt", h: "hi", j: "ja", z: "zh" };
 const GENDERS = [["female", "Female"], ["male", "Male"]];
+
+function mainGroups() {
+  const second = settings.get("languages.second");
+  const set = new Set(["a", "b"]);
+  for (const [g, lang] of Object.entries(GROUP_LANG)) {
+    if (lang === second) set.add(g);
+  }
+  return set;
+}
 
 // [settings path, label, min, max, step, default, format, left hint, right hint]
 const FX_SLIDERS = [
@@ -21,6 +31,17 @@ const FX_SLIDERS = [
 const EMO_SLIDERS = [
   ["fx.intensity", "Intensity", 0, 100, 5, 60, (v) => v + " %", "subtle", "strong"],
 ];
+const ONLY_ME_SLIDER = [
+  ["input.onlyMeStrict", "Strictness", 0, 100, 5, 50, (v) => v + " %", "accept more", "reject more"],
+];
+const ENROLL_TEXT = {
+  en: "I am recording my voice so the assistant can recognise me. When I speak, it should answer; " +
+    "when a video or another person talks, it should stay quiet. Today is a good day to try something new, " +
+    "and tomorrow I will tell you how it went. One, two, three, four, five.",
+  es: "Estoy grabando mi voz para que el asistente me reconozca. Cuando yo hable, debe responder; " +
+    "cuando hable un vídeo u otra persona, debe quedarse en silencio. Hoy es un buen día para probar algo nuevo, " +
+    "y mañana te contaré qué tal fue. Uno, dos, tres, cuatro, cinco.",
+};
 const AGES = [
   ["child", "Child", "2–5"], ["preteen", "Preteen", "8–12"], ["teen", "Teen", "13–19"],
   ["adult", "Adult", "20–50 · original"], ["mature", "Mature", "50–70"], ["senior", "Senior", "70+"],
@@ -70,15 +91,127 @@ export function initVoicePanel(h) {
     $("spkSel").title = "This browser cannot choose the output device (use Chrome or Edge).";
   }
   navigator.mediaDevices?.addEventListener?.("devicechange", refreshDevices);
+  initFilters();
 
   settings.onChange((paths) => {
     const all = paths.includes("*");
-    if (all || paths.some((p) => ["voice", "gender", "headphones"].includes(p))) renderVoice();
+    if (all || paths.some((p) => ["voice", "gender", "headphones"].includes(p) || p.startsWith("languages"))) renderVoice();
     if (all || paths.some((p) => p === "speed" || p.startsWith("fx"))) renderFx();
     if (all || paths.some((p) => p.startsWith("devices"))) refreshDevices();
+    if (all || paths.some((p) => p.startsWith("input") || p === "headphones")) renderFilters();
   });
   renderVoice();
   renderFx();
+  renderFilters();
+}
+
+// ---------------------------------------------------------- microphone filters
+
+let enrolling = false;
+let lastMatch = null;
+let loopDevices = null;
+
+function initFilters() {
+  for (const b of document.querySelectorAll("#noiseSeg button")) b.onclick = () => settings.set("input.noise", b.dataset.v);
+  $("pbGate").onchange = () => settings.set("input.playbackGate", $("pbGate").checked);
+  $("loopSel").onchange = () => settings.set("input.loopback", $("loopSel").value);
+  $("onlyMe").onchange = () => {
+    settings.set("input.onlyMe", $("onlyMe").checked);
+    if ($("onlyMe").checked && !settings.get("input.voiceprint")) toast("Record your voice first (10 seconds of reading)");
+  };
+  buildSliders($("onlyMeSlider"), ONLY_ME_SLIDER);
+  $("enrollBtn").onclick = startEnroll;
+  $("enrollCancel").onclick = () => { hooks.send({ type: "enroll_cancel" }); endEnroll(); };
+}
+
+async function loadLoopDevices() {
+  try {
+    const d = await (await fetch("/api/loopback")).json();
+    loopDevices = d;
+  } catch (_) { loopDevices = { devices: [] }; }
+  renderFilters();
+}
+
+function renderFilters() {
+  const noise = settings.get("input.noise") || "light";
+  for (const b of document.querySelectorAll("#noiseSeg button")) b.classList.toggle("active", b.dataset.v === noise);
+
+  const gate = !!settings.get("input.playbackGate");
+  $("pbGate").checked = gate;
+  $("loopRow").classList.toggle("disabled", !gate);
+  if (loopDevices === null) { loopDevices = { devices: [] }; loadLoopDevices(); }
+  const sel = $("loopSel");
+  const want = settings.get("input.loopback") || "";
+  const def = loopDevices.devices.find((d) => d.default);
+  sel.innerHTML = "";
+  sel.append(new Option(`System default${def ? ` (${def.name})` : ""}`, ""));
+  for (const d of loopDevices.devices) sel.append(new Option(d.name, d.name));
+  if (want && !loopDevices.devices.some((d) => d.name === want)) sel.append(new Option(`${want} (not found)`, want));
+  sel.value = want;
+  $("pbHint").textContent = loopDevices.error ? `Cannot listen to the PC output: ${loopDevices.error}` :
+    settings.get("headphones") ? "With headphones the microphone cannot hear the PC, so this filter is not needed." :
+      "On by default. Compares what the microphone hears with what the PC is playing, so a video does not start a turn. " +
+      "Choose the device your videos play on.";
+
+  const only = !!settings.get("input.onlyMe");
+  const vp = settings.get("input.voiceprint");
+  $("onlyMe").checked = only;
+  $("onlyMeBox").classList.toggle("disabled", !only && !enrolling);
+  $("enrollBtn").querySelector("span").textContent = vp ? "Record my voice again" : "Record my voice (10 s)";
+  $("enrollBtn").hidden = enrolling;
+  const slider = $("onlyMeSlider").querySelector("input");
+  slider.value = settings.get("input.onlyMeStrict") ?? 50;
+  slider.parentElement.querySelector("output").textContent = slider._fmt(slider.value);
+  let hint = loopDevices.speaker_model === false ? "The voice model is missing: run setup.bat. " : "";
+  hint += vp ? `Voice recorded ${settings.get("input.voiceprintDate") || ""}. Other voices (videos, TV, people nearby, ` +
+    "and the assistant's own voice) are ignored." : "No voice recorded yet.";
+  if (lastMatch) {
+    hint += ` Last match: <b class="${lastMatch.accepted ? "match-ok" : "match-no"}">${Math.round(lastMatch.score * 100)} %` +
+      ` ${lastMatch.accepted ? "accepted" : "ignored"}</b> (needs ${Math.round(lastMatch.threshold * 100)} %).`;
+  }
+  $("onlyMeHint").innerHTML = hint;
+}
+
+async function startEnroll() {
+  if (hooks.ensureStarted && !(await hooks.ensureStarted())) return;
+  enrolling = true;
+  const lang = (hooks.lang && hooks.lang()) === "es" ? "es" : "en";
+  $("enrollText").textContent = ENROLL_TEXT[lang];
+  $("enrollBar").style.width = "0%";
+  $("enrollRun").hidden = false;
+  renderFilters();
+  hooks.send({ type: "enroll_start" });
+}
+
+function endEnroll() {
+  enrolling = false;
+  $("enrollRun").hidden = true;
+  renderFilters();
+}
+
+// Server messages for the filters; returns true when handled.
+export function onFilterMessage(msg) {
+  switch (msg.type) {
+    case "enroll_progress":
+      $("enrollBar").style.width = msg.pct + "%";
+      return true;
+    case "enrolled":
+      settings.set("input.voiceprint", msg.voiceprint);
+      settings.set("input.voiceprintDate", new Date().toLocaleDateString());
+      if (!settings.get("input.onlyMe")) settings.set("input.onlyMe", true);
+      endEnroll();
+      toast("Voice recorded - only your voice will be answered now");
+      return true;
+    case "enroll_error":
+      endEnroll();
+      toast("Voice recording failed: " + msg.message, "error");
+      return true;
+    case "speaker":
+      lastMatch = msg;
+      renderFilters();
+      return true;
+  }
+  return false;
 }
 
 function buildSliders(box, defs) {
@@ -132,6 +265,9 @@ export function setCatalog(data) {
 
 function renderVoice() {
   const gender = settings.get("gender");
+  const main = mainGroups();
+  const langEl = $("langHint");
+  if (langEl) langEl.textContent = languageHint(settings);
   for (const b of document.querySelectorAll("#genderSeg button")) b.classList.toggle("active", b.dataset.g === gender);
   const sel = $("voice");
   const current = settings.get("voice");
@@ -145,7 +281,7 @@ function renderVoice() {
       const list = catalog.filter((v) => v.group === g && v.gender === gen)
         .sort((x, y) => (x.age ?? 99) - (y.age ?? 99) || x.name.localeCompare(y.name));
       if (!list.length) continue;
-      if (!MAIN.has(g) && !otherShown) {
+      if (!main.has(g) && !otherShown) {
         otherShown = true;
         const sep = document.createElement("optgroup");
         sep.label = "──────── Other languages ────────";

@@ -8,7 +8,7 @@ import { initModelPanel, panelOpened, setStatus } from "./modelpanel.js";
 import { initProfiles } from "./profiles.js";
 import { settings } from "./settings.js";
 import { $, capsHTML, esc, toast } from "./ui.js";
-import { initVoicePanel, refreshDevices, setCatalog } from "./voicepanel.js";
+import { languageList, resolveLanguages } from "./locale.js";
 
 hydrateIcons();
 
@@ -190,13 +190,17 @@ function send(obj) {
 function sendConfig() {
   const gender = settings.get("gender");
   const m = settings.get("model");
+  const inp = settings.get("input");
   send({
     type: "config", headphones: !!settings.get("headphones"), mic: micOn,
+    noise: inp.noise, playback_gate: !!inp.playbackGate && !settings.get("headphones"), loopback: inp.loopback || "",
+    only_me: !!inp.onlyMe, only_me_strictness: inp.onlyMeStrict, voiceprint: inp.voiceprint || null,
     voice: settings.get("voice") || null, gender: gender === "all" ? null : gender,
     speed: parseFloat(settings.get("speed")) || null, fx: settings.get("fx"),
     system_prompt: m.systemPrompt || null,
     gen: { temperature: m.temperature, top_p: m.top_p, top_k: m.top_k, repeat_penalty: m.repeat_penalty,
            max_tokens: m.max_tokens, history: m.history, thinking: !!m.thinking },
+    languages: languageList(settings),
   });
 }
 
@@ -216,6 +220,7 @@ function connect() {
 }
 
 function handle(m) {
+  if (onFilterMessage(m)) return;
   switch (m.type) {
     case "ready":
       showLLM(m.llm);
@@ -529,18 +534,28 @@ els.pill.onclick = () => togglePanel("right");
 settings.onChange((paths) => {
   const all = paths.includes("*");
   if (all || paths.some((p) => ["voice", "gender", "speed", "headphones"].includes(p) ||
-                               p.startsWith("fx") || p.startsWith("model"))) sendConfig();
+                               p.startsWith("fx") || p.startsWith("model") || p.startsWith("input") ||
+                               p.startsWith("languages"))) sendConfig();
   if (all || paths.includes("devices.mic")) switchMic();
   if (all || paths.includes("devices.speaker")) applySpeaker();
 });
 
-initVoicePanel({ playPreview, lang: () => lastLang });
+initVoicePanel({
+  playPreview, lang: () => lastLang, send: (obj) => whenOpen(() => send(obj)),
+  ensureStarted: async () => {
+    await start();
+    if (!capCtx) { toast("The microphone is not available", "error"); return false; }
+    if (!micOn) toggleMic();
+    return true;
+  },
+});
 initProfiles();
 history.initHistory({ newChat, open: openConversation });
 editor.initEditor();
 attach.initAttach({ send: (obj) => whenOpen(() => send(obj)) });
 initModelPanel({ statusChanged: (llm) => { if (llm) showLLM(llm); else pollStatus(); } });
 applyPanels();
+resolveLanguages(settings).then(() => sendConfig());
 ensureSocket();
 renderMic("on");
 refreshDevices();

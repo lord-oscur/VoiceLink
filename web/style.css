@@ -112,6 +112,21 @@ option { color: var(--text); }
 .seg button + button { border-left: 1px solid var(--line); }
 .seg button.active { background: #2a2350; color: #cbb8ff; }
 .seg button .ico { width: 16px; height: 16px; }
+.seg.text { align-self: flex-start; }
+.seg.text button { padding: 5px 14px; font-size: 12.5px; }
+
+.sub { margin: 2px 0 8px 22px; }
+.sub.disabled, .field.disabled { opacity: .45; pointer-events: none; }
+#onlyMeSlider { grid-template-columns: 1fr; margin: 10px 0 4px; }
+.enroll { margin-top: 8px; }
+.enroll blockquote {
+  margin: 6px 0 8px; padding: 8px 10px; border-left: 3px solid var(--speak); background: #1a1830;
+  border-radius: 6px; font-size: 13.5px; line-height: 1.5; color: var(--text);
+}
+.bar { height: 6px; border-radius: 3px; background: var(--panel2); overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; background: var(--listen); transition: width .2s; }
+.match-ok { color: var(--listen); }
+.match-no { color: var(--warn); }
 
 .popover { max-height: calc(100vh - 70px); overflow-y: auto; }
 .layer-title {

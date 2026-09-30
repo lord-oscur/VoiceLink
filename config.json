@@ -13,6 +13,7 @@
     "max_tokens": 512,
     "disable_thinking": true,
     "history_messages": 40,
+    "auto_title": true,
     "system_prompt": "You are a warm, quick-witted voice assistant having a real-time spoken conversation. Everything you write is read aloud by a text-to-speech engine, so: keep replies short and natural (usually one to three sentences) unless the user asks for detail; never use markdown, bullet lists, headings, code blocks, tables, emojis or special symbols; write numbers, dates and units the way a person would say them. Always reply in the same language the user is speaking. The user may interrupt you while you talk; an assistant message ending with an em dash means you were cut off at that point and the user did not hear the rest, so continue naturally."
   },
   "stt": {
@@ -22,11 +23,11 @@
     "device": "cpu",
     "cpu_threads": 4,
     "languages": [
-      "en",
-      "es"
+      "en"
     ],
     "live_transcript": true,
-    "live_interval_ms": 1000
+    "live_interval_ms": 1000,
+    "noise_filter": "light"
   },
   "tts": {
     "device": "cpu",

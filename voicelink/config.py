@@ -42,9 +42,10 @@ DEFAULTS = {
         "quantization": "int8",
         "device": "cpu",
         "cpu_threads": 4,
-        "languages": ["en", "es"],
+        "languages": ["en"],
         "live_transcript": True,
         "live_interval_ms": 1000,
+        "noise_filter": "light",  # off | light | strong (the browser's own suppression runs first)
     },
     "tts": {
         "device": "cpu",

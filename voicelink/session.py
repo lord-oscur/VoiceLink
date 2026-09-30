@@ -32,6 +32,8 @@ from .llm import LLMError
 from .textproc import (LANGUAGE_NAMES, SentenceChunker, clean_for_speech, confident_language, detect_language,
                        has_words, normalized_words)
 from .tts import SAMPLE_RATE as TTS_SR
+from .denoise import Denoiser
+from .speaker import threshold as speaker_threshold
 from .vad import FRAME, SAMPLE_RATE, SileroVAD
 
 log = logging.getLogger("session")
@@ -44,10 +46,28 @@ _BACKCHANNEL = set("uh um hmm mm mhm ah eh oh yeah yes yep ok okay right sure i 
 _STOP_WORDS = set("stop wait hold pause enough quiet shut para espera alto basta cállate silencio "
                   "momento arrête attends aspetta pare".split())
 _VERIFY_KEEP_MS = 1000  # audio kept when the echo-check window slides
+_ENROLL_MS = 10000      # speech needed for a voice print
+_LOOP_LEAD_S = 0.25     # speakers reach the mic a little after loopback captures them
+_QUIET = 10 ** (-50 / 20)
 
 
 def now():
     return time.perf_counter()
+
+
+def _max_corr(mic, played, max_lag):
+    """Peak normalized correlation, allowing the mic to lag the speakers."""
+    n = min(len(mic), len(played))
+    if n < 16:
+        return 0.0
+    best = -1.0
+    step = max(1, SAMPLE_RATE // 200)  # 5 ms
+    for lag in range(0, min(max_lag, n // 2), step):
+        a, b = mic[lag:], played[:n - lag]
+        a0, b0 = a - a.mean(), b - b.mean()
+        denom = (np.linalg.norm(a0) * np.linalg.norm(b0)) + 1e-9
+        best = max(best, float(np.dot(a0, b0) / denom))
+    return best
 
 
 def _ts():
@@ -151,6 +171,14 @@ class Session:
         self.speed = None
         self.mic_on = True
         self.pcm = np.zeros(0, dtype=np.float32)
+        self.denoiser = Denoiser(self.cfg["stt"].get("noise_filter", "light"))
+        self.playback_gate = False  # ignore speech that is coming out of this PC's speakers
+        self.loop_device = ""
+        self.only_me = False        # accept only the enrolled voice
+        self.voiceprint = None
+        self.only_me_thr = speaker_threshold(50)
+        self.enroll = None          # speech frames while recording a voice print
+        self.utt_t0 = 0.0
         self.preroll = deque(maxlen=max(1, int(self.vc["preroll_ms"] / FRAME_MS)))
         self.turn = None            # committed assistant turn (may still be playing)
         self.spec = None            # speculative (uncommitted) turn
@@ -187,6 +215,7 @@ class Session:
         for t in (self.live_task, self.verify_task, self.writer):
             if t and not t.done():
                 t.cancel()
+        self.eng.loopback.release(id(self))
 
     def _set_state(self, state):
         if state != self.state:
@@ -235,10 +264,39 @@ class Session:
                 self.mic_on = bool(msg["mic"])
                 if not self.mic_on:
                     self._abort_speech()
+            if msg.get("noise") in ("off", "light", "strong") and msg["noise"] != self.denoiser.level:
+                self.denoiser.set_level(msg["noise"])
+                self.denoiser.reset()
+            if "playback_gate" in msg or "loopback" in msg:
+                self.playback_gate = bool(msg.get("playback_gate", self.playback_gate))
+                self.loop_device = str(msg.get("loopback", self.loop_device) or "")
+                if self.playback_gate:
+                    await asyncio.get_running_loop().run_in_executor(
+                        None, self.eng.loopback.acquire, id(self), self.loop_device)
+                else:
+                    self.eng.loopback.release(id(self))
+            if "only_me" in msg:
+                self.only_me = bool(msg["only_me"])
+            if "only_me_strictness" in msg:
+                self.only_me_thr = speaker_threshold(msg["only_me_strictness"] or 50)
+            if "voiceprint" in msg:
+                vp = msg["voiceprint"]
+                self.voiceprint = None
+                if isinstance(vp, list) and len(vp) >= 64:
+                    v = np.asarray(vp, dtype=np.float32)
+                    self.voiceprint = v / (np.linalg.norm(v) + 1e-9)
             if "gen" in msg and isinstance(msg["gen"], dict):
                 self.gen = _clean_gen(msg["gen"])
             if "system_prompt" in msg:
                 self.system_prompt = (msg["system_prompt"] or "").strip() or None
+            if "languages" in msg and isinstance(msg["languages"], list):
+                allowed = [x for x in msg["languages"] if isinstance(x, str) and x in LANGUAGE_NAMES]
+                if "en" not in allowed:
+                    allowed = ["en"] + allowed
+                if allowed:
+                    self.langs = allowed
+                    if self.lang not in allowed:
+                        self.lang = allowed[0]
         elif kind == "text":
             text = (msg.get("text") or "").strip()
             if text or self.pending:
@@ -255,6 +313,16 @@ class Session:
             self.pending.pop(str(msg.get("id")), None)
         elif kind == "attach_clear":
             self.pending.clear()
+        elif kind == "enroll_start":
+            if not self.eng.speaker.available():
+                self.send({"type": "enroll_error", "message": "The voice model is missing - run setup.bat."})
+                return
+            self._interrupt("voice enrollment")
+            self._abort_speech()
+            self.enroll = []
+            self.send({"type": "enroll_progress", "pct": 0})
+        elif kind == "enroll_cancel":
+            self.enroll = None
         elif kind == "playback_idle":
             t = self.turn
             if t and t.id == msg.get("turn") and t.done:
@@ -291,6 +359,7 @@ class Session:
         if not self.mic_on:
             return
         x = np.frombuffer(data, dtype="<i2").astype(np.float32) * (1.0 / 32768.0)
+        x = self.denoiser.process(x)
         self.pcm = np.concatenate([self.pcm, x]) if len(self.pcm) else x
         n = len(self.pcm) // FRAME
         for i in range(n):
@@ -333,6 +402,9 @@ class Session:
     def _frame(self, frame):
         p = self.vad(frame)
         vc = self.vc
+        if self.enroll is not None:
+            self._enroll_frame(frame, p)
+            return
         if not self.in_speech:
             self.preroll.append(frame)
             active = self.assistant_active()
@@ -384,13 +456,48 @@ class Session:
         self.run_ms = 0.0
         self.silence_ms = 0.0
         self.last_live = now()
-        if assistant_active:
-            if self.headphones or not self.vc["echo_check"]:
-                self._interrupt("barge-in")
-            else:
-                self.verifying = True
-                self.verify_task = asyncio.create_task(self._verify_barge_in())
+        self.utt_t0 = now() - self.utt_ms / 1000.0
+        gate = self._gate(assistant_active)
+        if gate:
+            self.verifying = True
+            self.verify_task = asyncio.create_task(self._verify_speech(assistant_active, gate))
+        elif assistant_active:
+            self._interrupt("barge-in")
         self._refresh_state()
+
+    def _gate(self, assistant_active):
+        """Which checks new speech must pass before it counts, or None."""
+        if self.only_me and self.voiceprint is not None:
+            return "speaker"
+        echo = assistant_active and not self.headphones and self.vc["echo_check"]
+        playback = self.playback_gate and self.eng.loopback.playing()
+        if echo and playback:
+            return "echo+playback"
+        return "echo" if echo else "playback" if playback else None
+
+    # ------------------------------------------------------ voice enrollment
+
+    def _enroll_frame(self, frame, p):
+        if p >= self.vc["threshold"]:
+            self.enroll.append(frame)
+            got = len(self.enroll) * FRAME_MS
+            if len(self.enroll) % 8 == 0:
+                self.send({"type": "enroll_progress", "pct": min(99, round(100 * got / _ENROLL_MS))})
+            if got >= _ENROLL_MS:
+                audio = np.concatenate(self.enroll)
+                self.enroll = None
+                asyncio.create_task(self._finish_enroll(audio))
+
+    async def _finish_enroll(self, audio):
+        try:
+            vp = await asyncio.get_running_loop().run_in_executor(None, self.eng.speaker.enroll, audio)
+        except Exception as e:
+            log.exception("Voice enrollment failed")
+            self.send({"type": "enroll_error", "message": str(e) or type(e).__name__})
+            return
+        self.voiceprint = vp
+        log.info("Voice print recorded (%d s of speech)", len(audio) // SAMPLE_RATE)
+        self.send({"type": "enrolled", "voiceprint": [round(float(x), 5) for x in vp]})
 
     def _speech_end(self):
         speech_end = now() - self.silence_ms / 1000.0
@@ -399,12 +506,14 @@ class Session:
         self._reset_speech()
         self._commit(turn)
 
-    def _barge_in_verdict(self, text, trimmed=False):
-        """True = real interruption, None = not sure yet (echo/backchannel)."""
+    def _barge_in_verdict(self, text, trimmed=False, ref=None):
+        """True = the user said something new, None = not sure yet (echo,
+        backchannel, or the same words coming out of the speakers)."""
         words = normalized_words(text)
         if trimmed:
             words = words[1:]  # the window may start mid-word
-        ref = set(normalized_words(self.turn.text_near(now()))) if self.turn else set()
+        if ref is None:
+            ref = set(normalized_words(self.turn.text_near(now()))) if self.turn else set()
         if any(w in _STOP_WORDS and w not in ref for w in words):
             return True
         # Garbled echo ("for its" -> "fruit") looks like a new word, so a
@@ -416,48 +525,142 @@ class Session:
             return True
         return None
 
-    async def _verify_barge_in(self):
-        """Echo check: keep transcribing the candidate speech as it grows and
-        only interrupt for genuine new words.  Echo keeps the VAD busy for
-        long stretches, so once the audio exceeds verify_max_ms the window
-        slides forward instead of giving up; otherwise words the user says
-        in the middle of the echo would be thrown away."""
+    async def _verify_speech(self, assistant_active, gate):
+        """Holds new speech until it passes `gate`:
+        * "speaker": its voice print must match the enrolled one.
+        * "echo" / "playback": keep transcribing it as it grows and accept it
+          only for words that are not what the assistant is saying (echo) or
+          what the PC is playing (loopback transcript).
+        Echo and videos keep the VAD busy for long stretches, so once the
+        audio exceeds verify_max_ms the window slides forward instead of
+        giving up; otherwise words said in the middle would be thrown away."""
         vc = self.vc
         keep = max(1, int(_VERIFY_KEEP_MS / FRAME_MS))
         trimmed = False
+        text = ""
+        kind = None
         try:
-            while True:
-                heard_ms = self.utt_ms
-                text = await self._stt(self._utt_audio())
-                if not self.in_speech:
+            if gate == "speaker":
+                verdict, text = await self._speaker_verdict()
+                if verdict is None:
                     return
-                verdict = self._barge_in_verdict(text, trimmed)
-                log.debug("echo check %.0f ms -> %s: %r", heard_ms, verdict, text)
-                if verdict or self.end_pending:
-                    break
-                step = 500 if trimmed else 250  # long echo: leave CPU for the TTS
-                while self.in_speech and not self.end_pending and self.utt_ms < heard_ms + step:
-                    await asyncio.sleep(0.03)
-                if not self.in_speech:
-                    return
-                if self.utt_ms >= vc["verify_max_ms"] and not self.end_pending:
-                    self.utt = self.utt[-keep:]
-                    self.utt_ms = len(self.utt) * FRAME_MS
-                    trimmed = True
+            else:
+                while True:
+                    heard_ms = self.utt_ms
+                    text = await self._stt(self._utt_audio())
+                    if not self.in_speech:
+                        return
+                    ref = set()
+                    if "echo" in gate and self.turn:
+                        ref |= set(normalized_words(self.turn.text_near(now())))
+                    kind = None
+                    if "playback" in gate:
+                        played = self._loopback_for(self._utt_audio())
+                        play_text = ""
+                        if len(played) >= SAMPLE_RATE // 4 and self._tail_rms(played) >= _QUIET:
+                            play_text = await self._stt(played)
+                            if not self.in_speech:
+                                return
+                            ref |= set(normalized_words(play_text))
+                        kind = self._playback_kind(self._utt_audio(), played, text, play_text)
+                    verdict = self._barge_in_verdict(text, trimmed, ref)
+                    if kind == "quiet" and self._has_real_words(text) and self._tail_rms(self._utt_audio()) >= 10 ** (-40 / 20):
+                        verdict = True
+                    elif kind == "copy":
+                        words = normalized_words(text)
+                        if any(w in _STOP_WORDS and w not in ref for w in words):
+                            verdict = True
+                        else:
+                            verdict = None if not self.end_pending else False
+                    log.debug("%s check %.0f ms kind=%s -> %s: %r", gate, heard_ms, kind, verdict, text)
+                    if verdict or self.end_pending:
+                        break
+                    # Long echo or a video: leave CPU for the TTS.
+                    step = (1000 if trimmed else 600) if "playback" in gate else (500 if trimmed else 250)
+                    while self.in_speech and not self.end_pending and self.utt_ms < heard_ms + step:
+                        await asyncio.sleep(0.03)
+                    if not self.in_speech:
+                        return
+                    if self.utt_ms >= vc["verify_max_ms"] and not self.end_pending:
+                        dropped = len(self.utt) - keep
+                        if dropped > 0:
+                            self.utt_t0 += dropped * FRAME / SAMPLE_RATE
+                        self.utt = self.utt[-keep:]
+                        self.utt_ms = len(self.utt) * FRAME_MS
+                        trimmed = True
         except asyncio.CancelledError:
             return
         if not verdict:
-            log.info("Barge-in ignored (echo/backchannel): %r", text)
+            log.info("Speech ignored (%s%s): %r", gate, f"/{kind}" if kind else "", text)
             self._reset_speech()
             self._unduck()
             self._refresh_state()
             return
-        log.info("Barge-in confirmed: %r", text)
+        log.info("Speech accepted (%s)%s", gate, f": {text!r}" if text else "")
         self.verifying = False
-        self._interrupt("barge-in")
+        if assistant_active:
+            self._interrupt("barge-in")
         if self.end_pending:
             self._speech_end()
         self._refresh_state()
+
+    async def _speaker_verdict(self):
+        """(accepted, "") once there is enough audio, or (None, "") if the speech vanished."""
+        while self.in_speech and not self.end_pending and self.utt_ms < 1500:
+            await asyncio.sleep(0.03)
+        if not self.in_speech:
+            return None, ""
+        audio = self._utt_audio()
+        vp = await asyncio.get_running_loop().run_in_executor(None, self.eng.speaker.embed, audio)
+        if not self.in_speech:
+            return None, ""
+        score = float(np.dot(vp, self.voiceprint))
+        thr = self.only_me_thr - (0.06 if len(audio) < SAMPLE_RATE else 0.0)  # short clips score lower
+        ok = score >= thr
+        self.send({"type": "speaker", "score": round(score, 3), "threshold": round(thr, 3), "accepted": ok})
+        log.debug("voice match %.2f (needs %.2f) -> %s", score, thr, ok)
+        return ok, ""
+
+    def _loopback_for(self, audio):
+        # Align to the microphone clock, not wall time: STT can take hundreds of
+        # milliseconds, during which the speakers may already have gone quiet.
+        t1 = (self.utt_t0 + len(audio) / SAMPLE_RATE) if self.utt_t0 else now()
+        dur = max(len(audio) / SAMPLE_RATE, 0.3)
+        return self.eng.loopback.window(t1 - dur - _LOOP_LEAD_S, t1)
+
+    @staticmethod
+    def _tail_rms(x, seconds=0.5):
+        if x is None or len(x) == 0:
+            return 0.0
+        n = min(len(x), int(seconds * SAMPLE_RATE))
+        t = x[-n:]
+        return float(np.sqrt(np.mean(t * t)))
+
+    def _playback_kind(self, mic, played, mic_text="", play_text=""):
+        """'copy' = the mic is the speakers, 'quiet' = speakers silent, 'mix' = both."""
+        play_rms = self._tail_rms(played)
+        mic_rms = self._tail_rms(mic)
+        if play_rms < _QUIET:
+            return "quiet"
+        mic_w = {w for w in normalized_words(mic_text) if len(w) > 1 and w not in _BACKCHANNEL}
+        play_w = {w for w in normalized_words(play_text) if len(w) > 1}
+        if mic_w and play_w:
+            shared = sum(1 for w in mic_w if w in play_w or any(SequenceMatcher(None, w, r).ratio() >= 0.6 for r in play_w))
+            if shared >= 0.3 * len(mic_w):
+                return "copy"
+        # A video leaking into the mic is quieter than (or similar to) the speakers
+        # themselves. Speech over a video is louder.
+        if mic_rms <= play_rms * 0.85:
+            return "copy"
+        corr = _max_corr(mic.astype(np.float64), played.astype(np.float64), int(0.35 * SAMPLE_RATE))
+        if corr > 0.18:
+            return "copy"
+        return "mix"
+
+    @staticmethod
+    def _has_real_words(text):
+        words = [w for w in normalized_words(text) if len(w) > 1 and w not in _BACKCHANNEL]
+        return len(words) >= 1 and (len(words) >= 2 or len(words[0]) >= 4)
 
     def _maybe_live(self):
         sc = self.cfg["stt"]

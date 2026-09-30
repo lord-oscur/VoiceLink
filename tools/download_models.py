@@ -18,6 +18,9 @@ FILES = {
         "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx",
     "kokoro/voices-v1.0.bin":
         "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin",
+    # Speaker verification for "Only my voice" (WeSpeaker ResNet34, VoxCeleb; sherpa-onnx export).
+    "speaker/wespeaker_resnet34.onnx":
+        "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet34.onnx",
     # Spanish word frequencies (OpenSubtitles 2018, hermitdave/FrequencyWords): fills gaps in
     # pyspellchecker's Spanish dictionary ("vamos", "qué", "estamos"...).
     "dict/es_50k.txt":

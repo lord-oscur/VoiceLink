@@ -15,11 +15,13 @@ import aiohttp
 import numpy as np
 from aiohttp import web
 
-from . import __version__
+from . import __version__, loopback
 from .config import ROOT, load_config, model_path
 from .history import ConversationStore
 from .llm import LLMError, LMStudioClient
+from .loopback import Loopback
 from .session import Session
+from .speaker import SpeakerID
 
 log = logging.getLogger("server")
 WEB_DIR = os.path.join(ROOT, "web")
@@ -72,6 +74,8 @@ class Engines:
         self.stt = SpeechToText(cfg["stt"])
         self.tts = TextToSpeech(cfg["tts"])
         self.store = ConversationStore()
+        self.loopback = Loopback()
+        self.speaker = SpeakerID()
         self.llm = None
 
 
@@ -309,6 +313,15 @@ async def on_startup(app):
 
 async def on_cleanup(app):
     await app["http"].close()
+    app["engines"].loopback.close()
+
+
+async def loopback_devices(request):
+    eng = request.app["engines"]
+    loop = asyncio.get_running_loop()
+    return web.json_response({"devices": await loop.run_in_executor(None, loopback.speakers),
+                              "speaker_model": eng.speaker.available(),
+                              "error": eng.loopback.error})
 
 
 def main():
@@ -343,6 +356,7 @@ def main():
     app.router.add_get("/api/status", status)
     app.router.add_get("/api/voices", voices)
     app.router.add_post("/api/preview", preview)
+    app.router.add_get("/api/loopback", loopback_devices)
     app.router.add_post("/api/check", check_text)
     app.router.add_post("/api/check_ai", check_ai)
     app.router.add_post("/api/extract", extract)

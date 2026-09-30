@@ -9,7 +9,7 @@ updated as each item lands.
 | # | Requirement (as requested) | Status |
 |---|---|---|
 | 1 | Add a favicon.ico. | done |
-| 2 | 100 % offline after the first install. | pending |
+| 2 | 100 % offline after the first install. | done |
 | 3 | Show the model's capabilities (thinking, tool use, vision…) as icons next to the loaded model name. | done |
 | 4 | Audio/voice settings in a hover panel opened from a voice icon, in a small toolbar at the top right (more icons later). | done |
 | 5 | MVP focuses on English and Spanish; keep the other voices (a multi-language selector comes later). | done |
@@ -23,8 +23,8 @@ updated as each item lands.
 | 13 | Model settings on the right: system prompt, context, etc., even for a model loaded through the API. | done |
 | 14 | Attach files to the chat according to the model's capabilities (images, audio, video, documents). | done |
 | 15 | Spell check and grammar check in the text box, with coloured underlines, replacement suggestions, and a redundancy checker. | done |
-| 16 | STT noise filter (PC fans, ambient sound). | pending |
-| 17 | STT input filter so a video playing on the same PC does not trigger the STT. | pending |
+| 16 | STT noise filter (PC fans, ambient sound). | done |
+| 17 | STT input filter so a video playing on the same PC does not trigger the STT. | done |
 
 ## Decisions (answered by the user)
 
@@ -32,11 +32,11 @@ updated as each item lands.
   (repeated words, pleonasms such as "free gift" or "subir arriba", a/an,
   capitalization), plus an optional **Check with AI** pass that asks the
   LM Studio model for grammar fixes.
-* **Playback filter (17):** use both methods.
-  * The server records what the PC itself plays (WASAPI loopback) and
-    ignores microphone speech that matches it.
-  * An optional **Only my voice** mode compares each utterance with an
-    enrolled voice sample.
+* **Playback filter (17):** on by default. Uses WASAPI loopback of what the
+  PC is playing. **Only my voice** stays opt-in (10 s enrollment).
+* **Languages:** English is always first. A second language is taken from
+  the OS locale, then the time zone, then the browser geolocation if that
+  permission was already granted (no extra network call).
 * **Chat history (12):** stored on disk in `data/conversations/` (one JSON
   file per conversation), not in the browser.
 * **Model panel (13):** per-request settings, plus reloading the model with a
@@ -85,6 +85,17 @@ updated as each item lands.
 16. Noise filter (16): stationary noise suppression (a spectral Wiener filter
     with a noise estimate learned while nobody speaks) on the 16 kHz
     microphone stream before VAD and STT, with Off / Light / Strong.
-17. Playback filter (17): loopback reference capture, with a correlation and
-    energy gate against the microphone, and speaker verification with a
-    small ONNX speaker-embedding model and a 10-second enrollment.
+17. Playback filter (17): WASAPI loopback of what the PC is playing, compared
+    with the microphone by energy (a quieter copy of the speakers is ignored)
+    and by overlapping transcripts; when the speakers go quiet, new words are
+    accepted. Speaker verification with WeSpeaker ResNet34 (10 s enrollment)
+    is the backup for TVs and other people. `tools/test_filters.py` covers
+    both. Same-engine TTS voices can still score close to each other; a
+    recorded human voice against a YouTube clip is the intended case.
+
+## Offline (item 2)
+
+Runtime never opens the internet. `run.bat` and `python -m voicelink` set
+`HF_HUB_OFFLINE=1`. Models, dictionaries and the speaker network live in
+`models/`. The page has no CDN. The only LAN call is LM Studio at
+`127.0.0.1:1234`. `setup.bat` is the one step that needs the internet.
