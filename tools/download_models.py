@@ -18,6 +18,10 @@ FILES = {
         "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx",
     "kokoro/voices-v1.0.bin":
         "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin",
+    # Spanish word frequencies (OpenSubtitles 2018, hermitdave/FrequencyWords): fills gaps in
+    # pyspellchecker's Spanish dictionary ("vamos", "qué", "estamos"...).
+    "dict/es_50k.txt":
+        "https://raw.githubusercontent.com/hermitdave/FrequencyWords/master/content/2018/es/es_50k.txt",
 }
 
 PARAKEET_REPO = "istupakov/parakeet-tdt-0.6b-v3-onnx"

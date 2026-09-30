@@ -1,6 +1,7 @@
 // VoiceLink browser client: microphone capture, audio playback and UI.
 // All speech processing happens on the Python server over one WebSocket.
 import * as attach from "./attach.js";
+import * as editor from "./editor.js";
 import * as history from "./history.js";
 import { hydrateIcons, icon } from "./icons.js";
 import { initModelPanel, panelOpened, setStatus } from "./modelpanel.js";
@@ -463,12 +464,14 @@ function sendText() {
   };
   go();
   els.input.value = "";
+  editor.reset();
   autoGrow();
 }
 
 function autoGrow() {
   els.input.style.height = "auto";
-  els.input.style.height = Math.min(els.input.scrollHeight, 180) + "px";
+  const border = els.input.offsetHeight - els.input.clientHeight;
+  els.input.style.height = Math.min(els.input.scrollHeight + border, 180) + "px";
 }
 
 els.orb.onclick = () => (started ? toggleMic() : start());
@@ -534,6 +537,7 @@ settings.onChange((paths) => {
 initVoicePanel({ playPreview, lang: () => lastLang });
 initProfiles();
 history.initHistory({ newChat, open: openConversation });
+editor.initEditor();
 attach.initAttach({ send: (obj) => whenOpen(() => send(obj)) });
 initModelPanel({ statusChanged: (llm) => { if (llm) showLLM(llm); else pollStatus(); } });
 applyPanels();

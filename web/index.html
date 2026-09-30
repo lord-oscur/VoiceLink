@@ -128,7 +128,30 @@
       <form id="textForm" class="composer" autocomplete="off">
         <button type="button" id="attachBtn" class="attach-btn" title="Attach files"><i data-icon="clip"></i></button>
         <input type="file" id="attachFile" multiple hidden>
-        <textarea id="textInput" rows="1" placeholder="Type a message (or just talk)…  Enter sends, Shift+Enter adds a line"></textarea>
+        <div class="editor">
+          <div id="backdrop" class="backdrop" aria-hidden="true"></div>
+          <textarea id="textInput" rows="1" placeholder="Type a message (or just talk)…  Enter sends, Shift+Enter adds a line"></textarea>
+          <div id="suggestBox" class="suggest" hidden></div>
+        </div>
+        <div class="tool up" id="checkTool">
+          <button type="button" id="checkBtn" class="attach-btn" title="Spelling &amp; grammar"><i data-icon="spell"></i><span id="checkCount" class="badge" hidden></span></button>
+          <div class="popover up">
+            <div class="layer-title"><i data-icon="spell"></i> Writing checker</div>
+            <label class="check-row"><input type="checkbox" id="checkOn"> Check spelling, grammar and redundancy</label>
+            <div class="row"><label for="checkLang">Language</label>
+              <select id="checkLang"><option value="auto">Auto</option><option value="en">English</option><option value="es">Spanish</option></select>
+            </div>
+            <p class="hint">Detected: <b id="checkDetected">—</b></p>
+            <div class="legend">
+              <span><u class="t-spelling">spelling</u></span><span><u class="t-grammar">grammar</u></span>
+              <span><u class="t-style">redundancy</u></span><span><u class="t-ai">AI</u></span>
+            </div>
+            <button type="button" id="checkAI" class="wide-btn"><i data-icon="sparkle"></i> Check with AI (loaded model)</button>
+            <div class="row dict-row"><span>Personal dictionary: <b id="dictCount">0</b> words</span>
+              <button type="button" id="dictClear" class="link-btn">Clear</button></div>
+            <p class="hint">Click an underlined word for suggestions.</p>
+          </div>
+        </div>
         <button type="submit" class="send" title="Send"><i data-icon="send"></i></button>
       </form>
     </main>

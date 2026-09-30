@@ -204,6 +204,45 @@ async def transcribe(request):
     return web.json_response({"ok": True, "text": text, "duration": round(duration, 2)})
 
 
+async def check_text(request):
+    from . import checker
+
+    body = await request.json()
+    text = (body.get("text") or "")[:20000]
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(None, checker.check, text, body.get("lang") or "auto",
+                                        tuple(body.get("ignore") or ()))
+    return web.json_response(result)
+
+
+async def check_ai(request):
+    """Asks the loaded model for a corrected version and returns the differences."""
+    from . import checker
+
+    body = await request.json()
+    text = (body.get("text") or "")[:6000]
+    if not text.strip():
+        return web.json_response({"ok": True, "issues": []})
+    lang = checker.detect(text, body.get("lang") or "auto")
+    name = "Spanish" if lang == "es" else "English"
+    prompt = [
+        {"role": "system", "content": "You are a meticulous proofreader. You fix spelling, grammar, punctuation "
+         "and accents, and remove redundant words, while keeping the author's wording, tone and language."},
+        {"role": "user", "content": f"Correct this {name} text. Change as little as possible. Reply with the "
+         f"corrected text only - no quotes, no explanations.\n\n{text}"},
+    ]
+    llm = request.app["engines"].llm
+    try:
+        fixed = await llm.complete(prompt, temperature=0.1, max_tokens=max(64, len(text) // 2 + 64))
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e) or type(e).__name__})
+    fixed = fixed.strip().strip('"“”')
+    if not fixed or len(fixed) > len(text) * 2 + 40:
+        return web.json_response({"ok": False, "error": "the model did not return a usable correction"})
+    return web.json_response({"ok": True, "lang": lang, "corrected": fixed,
+                              "issues": checker.ai_issues(text, fixed, lang)})
+
+
 async def voices(request):
     tts = request.app["engines"].tts
     return web.json_response({"voices": tts.catalog, "voice_map": tts.voice_map,
@@ -264,6 +303,8 @@ async def on_startup(app):
     else:
         log.warning("LM Studio not reachable at %s (%s). Start its server; the UI will retry.",
                     st["base_url"], st["error"])
+    from . import checker
+    asyncio.get_running_loop().run_in_executor(None, checker.warm)
 
 
 async def on_cleanup(app):
@@ -302,6 +343,8 @@ def main():
     app.router.add_get("/api/status", status)
     app.router.add_get("/api/voices", voices)
     app.router.add_post("/api/preview", preview)
+    app.router.add_post("/api/check", check_text)
+    app.router.add_post("/api/check_ai", check_ai)
     app.router.add_post("/api/extract", extract)
     app.router.add_post("/api/transcribe", transcribe)
     app.router.add_get("/api/llm_defaults", llm_defaults)
