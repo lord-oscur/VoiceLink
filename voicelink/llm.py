@@ -271,9 +271,13 @@ class LMStudioClient:
                 raise LLMError(f"LM Studio HTTP {r.status}: {text[:300]}")
             return json.loads(text) if text else {}
 
-    def _body(self, messages, gen):
+    def can_tools(self):
+        caps = ((self.info or {}).get("caps") or {})
+        return bool(caps.get("tools"))
+
+    def _body(self, messages, gen, tools=None):
         think = gen.get("thinking", not self.cfg["disable_thinking"])
-        prefill = not think and self.no_think == "prefill"
+        prefill = not think and self.no_think == "prefill" and not tools
         body = {
             "model": self.model,
             "messages": messages + ([_PREFILL] if prefill else []),
@@ -285,6 +289,9 @@ class LMStudioClient:
                 body[key] = value
         if not think and self.no_think == "effort":
             body["reasoning_effort"] = "none"
+        if tools:
+            body["tools"] = tools
+            body["tool_choice"] = "auto"
         return body
 
     async def complete(self, messages, **gen):
@@ -303,7 +310,7 @@ class LMStudioClient:
             mode = self.no_think
             got_content = False
             thinking = gen.get("thinking", not self.cfg["disable_thinking"])
-            agen = self._stream_once(messages, gen)
+            agen = self._stream_once(messages, gen, None)
             try:
                 async for kind, text in agen:
                     if kind == "reasoning" and mode == "effort" and not got_content and not thinking:
@@ -318,10 +325,47 @@ class LMStudioClient:
             if self.no_think == mode:
                 return
 
-    async def _stream_once(self, messages, gen):
+    async def generate(self, messages, gen=None, tools=None, execute=None):
+        """Yield spoken content. When `tools` and `execute` are set, run tool calls (never spoken)."""
+        from .mcp import MAX_ROUNDS
+
+        gen = gen or {}
+        msgs = list(messages)
+        for rnd in range(MAX_ROUNDS):
+            calls = {}
+            async for kind, payload in self._stream_once(msgs, gen, tools if tools else None):
+                if kind == "content":
+                    yield payload
+                elif kind == "tool_call":
+                    _merge_tool_delta(calls, payload)
+            pending = [calls[i] for i in sorted(calls) if calls[i].get("name")]
+            if not pending or not execute:
+                return
+            assistant = {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{
+                    "id": c.get("id") or "call_%d_%d" % (rnd, i),
+                    "type": "function",
+                    "function": {"name": c["name"], "arguments": c.get("arguments") or "{}"},
+                } for i, c in enumerate(pending)],
+            }
+            msgs.append(assistant)
+            for tc in assistant["tool_calls"]:
+                name = tc["function"]["name"]
+                raw = tc["function"]["arguments"]
+                try:
+                    args = json.loads(raw) if raw else {}
+                except ValueError:
+                    args = {"_raw": raw}
+                result = await execute(name, args)
+                msgs.append({"role": "tool", "tool_call_id": tc["id"], "content": result or ""})
+        log.warning("Stopped after %d tool rounds", MAX_ROUNDS)
+
+    async def _stream_once(self, messages, gen, tools=None):
         think = ThinkFilter()
         url = self.base + "/v1/chat/completions"
-        body = self._body(messages, gen)
+        body = self._body(messages, gen, tools)
         try:
             async with self.http.post(url, json=body, headers=self.headers,
                                       timeout=aiohttp.ClientTimeout(total=None, sock_connect=5,
@@ -357,8 +401,25 @@ class LMStudioClient:
                         visible = think.feed(content)
                         if visible:
                             yield "content", visible
+                    for piece in delta.get("tool_calls") or []:
+                        yield "tool_call", piece
                 tail = think.flush()
                 if tail:
                     yield "content", tail
         except aiohttp.ClientConnectorError as e:
             raise LLMError(f"Cannot reach LM Studio at {self.base} ({e.os_error or e})") from e
+
+
+def _merge_tool_delta(bag, piece):
+    """Assemble streamed OpenAI tool_call fragments by index."""
+    if not isinstance(piece, dict):
+        return
+    idx = piece.get("index", 0)
+    slot = bag.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+    if piece.get("id"):
+        slot["id"] = piece["id"]
+    fn = piece.get("function") or {}
+    if fn.get("name"):
+        slot["name"] += fn["name"]
+    if fn.get("arguments"):
+        slot["arguments"] += fn["arguments"]

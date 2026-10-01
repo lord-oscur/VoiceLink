@@ -385,3 +385,90 @@ See `changes_v2.md` for the requirement list. Notes from the implementation:
   `data/projects.json` holds folder names. Incognito is a session flag:
   nothing is written, including titles. Turning it off does not write the
   current chat (`_skip_persist` stays set until New chat).
+
+## 11. OpenAPPA (looked at, not wired)
+
+[OpenAPPA](https://github.com/archestra-ai/OpenAPPA) is a deterministic
+information-flow check that sits **between an agent and its tools**. Before
+each tool runs it asks: is this data allowed to go to this destination?
+Policy is TOML. The engine decides from the event log only (same log →
+same decision). Preview / RFC; wire format may break.
+
+VoiceLink now has a tool loop (§12). OpenAPPA is still **not wired**. The
+hook point is `session._run_turn` → `eng.mcp.call` (the `execute` callback
+in `llm.generate`). Attachments still go into the prompt, not through a
+tool gate.
+
+When it is wired:
+
+1. **HTTP sidecar**, not the PyO3 embed. `appa-agent-python` is a
+   maturin/Rust extension. A sidecar (`POST /hook`) matches how kagent
+   and Amp integrate, keeps Rust out of this venv, and fails closed if
+   the process is down.
+2. **Hooks in `session.py`**: `session_start` (new chat / open), `prompt`
+   (each user turn), `tool_call` (only run on `allow_call`), `tool_result`
+   (deliver / replace / withhold before the model sees it), `turn_end`.
+3. **`appa.toml` in this folder** with a contract per VoiceLink tool
+   (`web_search`, `fetch_page`, `weather`, `stock_quote`, plus any remote
+   MCP prefix). Attachments already ingested in a chat should be declared
+   as a read so later outbound tools inherit the tighter audience/trust
+   label.
+4. Denied calls return the explanation (and remedy offers) to the
+   model; TTS can speak a short form. Human approval (`hitl`) would
+   surface in the chat UI, not auto-approve.
+
+Rejected for this machine: compiling the Python binding (needs a Rust
+toolchain), and putting LM Studio behind Archestra's proxy (extra
+gateway, not this-folder-only).
+
+## 12. Stateless MCP tools
+
+Only the new MCP transport is accepted: Streamable HTTP in **stateless**
+mode (SEP-2575). One POST per JSON-RPC call to `/mcp`. No stdio, no
+`command`/`args` servers, no HTTP+SSE (`/sse`), no `Mcp-Session-Id`.
+Remote servers that mint a session id are skipped. Protocol
+`2025-11-25` (also accept `2025-06-18` and `2025-03-26`).
+
+**Local tools** (no API keys) live in `voicelink/mcp.py` and are also
+exposed at VoiceLink's own `POST /mcp` so a later sidecar can call them
+the same way a remote MCP would:
+
+| Tool | Source | Use |
+|---|---|---|
+| `web_search` | DuckDuckGo HTML, Instant Answer fallback | news, facts, scores, people |
+| `fetch_page` | public http(s) only | read a result URL; blocks loopback / RFC1918 |
+| `weather` | Open-Meteo + its geocoder | current + short forecast |
+| `stock_quote` | Yahoo chart API | ticker price (AAPL, BTC-USD, …) |
+
+Optional extra servers in `config.json` must be
+`{"name": "…", "url": "http://host/mcp"}`. Their tools are prefixed
+`name__tool` so they cannot collide with the local set.
+
+**Offered only when the loaded model can use tools.**
+`LMStudioClient.can_tools()` reads `info.caps.tools` from LM Studio.
+`session._tools()` returns the OpenAI tool list only if that is true and
+the MCP catalog is non-empty. Models without the tools icon never see
+the tools array and never get the search instructions (they would invent
+calls). Titles and the grammar checker still use `llm.stream()` with no
+tools.
+
+**Clock and search instructions** are appended at request time, not
+written into `config.json`:
+
+* `clock_line()` — current local date, time, timezone and ISO stamp, plus
+  a line that training data is older and the gap is time that has already
+  passed. Always added, even when tools are off, so the model can answer
+  "what time is it" and know how stale it is.
+* `TOOLS_HINT` — only when tools are offered. Tells the model to look
+  things up whenever it is unsure, untrained, or would otherwise say it
+  does not know or invent an answer. Weather, stocks and news are
+  examples, not the only cases. Dedicated helpers (`weather`,
+  `stock_quote`, `fetch_page`) sit beside general `web_search`.
+
+`llm.generate()` loops up to four tool rounds. Tool JSON is never spoken
+or stored in chat history; only the final spoken reply is. The browser
+shows a one-line "Searching the web · …" notice while a tool runs.
+
+`tools/test_mcp.py` covers reject-legacy, the RPC surface, URL guard,
+tool-delta merge, `can_tools`, clock/hint injection, and a fake generate
+loop. Live DuckDuckGo/Yahoo/Open-Meteo calls are not in that file.

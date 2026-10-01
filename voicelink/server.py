@@ -19,6 +19,7 @@ from . import __version__, loopback
 from .config import ROOT, load_config, model_path
 from .history import ConversationStore, ProjectStore
 from . import hfsearch
+from . import mcp as mcpmod
 from .llm import LLMError, LMStudioClient
 from .loopback import Loopback
 from .session import Session
@@ -95,6 +96,21 @@ async def revalidate_static(request, response):
         response.headers["Cache-Control"] = "no-cache"
 
 
+def mcp_payload(eng, detail=False):
+    mcp = getattr(eng, "mcp", None)
+    tools = mcp.catalog() if mcp else []
+    listed = ([{"name": t["name"], "description": t.get("description")} for t in tools]
+              if detail else [t["name"] for t in tools])
+    return {
+        "enabled": bool(mcp and mcp.enabled),
+        "protocol": mcpmod.PROTOCOL,
+        "transport": "streamable-http-stateless",
+        "endpoint": "/mcp",
+        "tools": listed,
+        "offered": bool(eng.llm and eng.llm.can_tools() and tools),
+    }
+
+
 async def status(request):
     eng = request.app["engines"]
     llm = await eng.llm.status()
@@ -105,6 +121,7 @@ async def status(request):
         "voice_map": eng.tts.voice_map,
         "speed": eng.tts.speed,
         "languages": eng.cfg["stt"]["languages"],
+        "mcp": mcp_payload(eng),
     })
 
 
@@ -113,6 +130,46 @@ async def llm_defaults(request):
     return web.json_response({k: c.get(k) for k in (
         "system_prompt", "temperature", "top_p", "top_k", "repeat_penalty", "max_tokens",
         "history_messages", "disable_thinking")})
+
+
+async def mcp_status(request):
+    return web.json_response(mcp_payload(request.app["engines"], detail=True))
+
+
+async def mcp_http(request):
+    """Stateless MCP: POST JSON-RPC only. No SSE sessions, no session id."""
+    if request.method == "GET":
+        return web.json_response(
+            {"error": "stateless MCP: POST JSON-RPC only; HTTP+SSE sessions are not used"},
+            status=405)
+    if request.method != "POST":
+        return web.Response(status=405)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response(mcpmod._err(None, -32700, "Parse error"), status=400)
+    if isinstance(body, list):
+        return web.json_response(mcpmod._err(None, -32600, "JSON-RPC batches are not supported"), status=400)
+    if not isinstance(body, dict):
+        return web.json_response(mcpmod._err(None, -32600, "Invalid Request"), status=400)
+    header_ver = request.headers.get("MCP-Protocol-Version") or request.headers.get("Mcp-Protocol-Version")
+    meta = (body.get("params") or {}).get("_meta") if isinstance(body.get("params"), dict) else {}
+    meta_ver = meta.get("io.modelcontextprotocol/protocolVersion") if isinstance(meta, dict) else None
+    if header_ver and meta_ver and header_ver != meta_ver:
+        return web.json_response(mcpmod._err(body.get("id"), -32600, "MCP-Protocol-Version does not match _meta"),
+                                 status=400)
+    out, status = mcpmod.handle_rpc(body)
+    if body.get("method") == "tools/call" and status == 200:
+        try:
+            result = await mcpmod.call_local(request.app["http"], body.get("params") or {})
+            out = {"jsonrpc": "2.0", "id": body.get("id"), "result": result}
+            status = 200
+        except Exception as e:
+            out = mcpmod._err(body.get("id"), -32603, str(e))
+            status = 500
+    if out is None:
+        return web.Response(status=status)
+    return web.json_response(out, status=status)
 
 
 async def models_list(request):
@@ -379,8 +436,8 @@ async def ws_handler(request):
     peer = request.remote
     log.info("Client connected (%s)", peer)
     llm = await eng.llm.status()
-    session.send({"type": "ready", "llm": llm, "voices": eng.tts.voices,
-                  "voice_map": eng.tts.voice_map, "speed": eng.tts.speed})
+    session.send({"type": "ready", "llm": llm, "mcp": mcp_payload(eng),
+                  "voices": eng.tts.voices, "voice_map": eng.tts.voice_map, "speed": eng.tts.speed})
     session._refresh_state()
     try:
         async for msg in ws:
@@ -403,6 +460,8 @@ async def on_startup(app):
     eng = app["engines"]
     app["http"] = aiohttp.ClientSession()
     eng.llm = LMStudioClient(eng.cfg["llm"], app["http"])
+    eng.mcp = mcpmod.McpHub(eng.cfg, app["http"])
+    await eng.mcp.start()
     st = await eng.llm.status()
     if st["ok"]:
         log.info("LM Studio OK at %s - model: %s", st["base_url"], st["model"])
@@ -478,6 +537,8 @@ def main():
     app.router.add_post("/api/projects", project_create)
     app.router.add_patch("/api/projects/{pid}", project_patch)
     app.router.add_delete("/api/projects/{pid}", project_delete)
+    app.router.add_get("/api/mcp", mcp_status)
+    app.router.add_route("*", "/mcp", mcp_http)
     app.router.add_get("/ws", ws_handler)
     app.router.add_static("/static/", WEB_DIR)
 

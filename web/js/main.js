@@ -4,7 +4,7 @@ import * as attach from "./attach.js";
 import * as editor from "./editor.js";
 import * as history from "./history.js";
 import { hydrateIcons, icon } from "./icons.js";
-import { initModelPanel, panelOpened, setStatus } from "./modelpanel.js";
+import { initModelPanel, panelOpened, setMcp, setStatus } from "./modelpanel.js";
 import { initProfiles } from "./profiles.js";
 import { settings } from "./settings.js";
 import { $, capsHTML, esc, toast } from "./ui.js";
@@ -234,7 +234,7 @@ function handle(m) {
   if (onFilterMessage(m)) return;
   switch (m.type) {
     case "ready":
-      showLLM(m.llm);
+      showLLM(m.llm, m.mcp);
       break;
     case "state":
       if (!started) break;
@@ -286,6 +286,14 @@ function handle(m) {
     case "conv_saved":
       history.saved(m.id, m.title, { labels: m.labels, project_id: m.project_id });
       break;
+    case "tool": {
+      if (m.phase !== "start") break;
+      const label = { web_search: "Searching the web", weather: "Checking the weather",
+        stock_quote: "Looking up the market", fetch_page: "Reading a page" }[m.name] || m.name;
+      const q = m.args && (m.args.query || m.args.place || m.args.symbol || m.args.url);
+      addMsg("system", q ? `${label} · ${q}` : label);
+      break;
+    }
     case "error":
       addMsg("error", m.message);
       break;
@@ -384,7 +392,7 @@ function showMetrics(m) {
   els.metrics.textContent = parts.join("  ·  ");
 }
 
-function showLLM(llm) {
+function showLLM(llm, mcp) {
   els.pill.className = "model-pill " + (llm.ok ? "ok" : "bad");
   const name = llm.ok ? (llm.info && llm.info.name) || llm.model : "LM Studio offline";
   let title = llm.ok ? `${llm.model} @ ${llm.base_url}` : `${llm.base_url}: ${llm.error}`;
@@ -392,17 +400,24 @@ function showLLM(llm) {
     const i = llm.info;
     title += [i.params && `\n${i.params} parameters`, i.quant && `${i.quant}`].filter(Boolean).join(" · ");
   }
+  if (mcp && mcp.enabled && mcp.tools && mcp.tools.length) {
+    title += mcp.offered
+      ? `\nLive tools: ${mcp.tools.join(", ")}`
+      : "\nLive tools off (this model has no tool use)";
+  }
   els.pill.innerHTML = `<span class="dot"></span><span class="name">${esc(name)}</span>` +
     `<span class="caps">${llm.ok ? capsHTML(llm.info) : ""}</span>`;
   els.pill.title = title + "\nClick for model settings";
   setStatus(llm);
+  if (mcp) setMcp(mcp);
   attach.setCaps(llm.ok ? llm.info : null);
 }
 
 async function pollStatus() {
   try {
     const r = await fetch("/api/status");
-    showLLM((await r.json()).llm);
+    const data = await r.json();
+    showLLM(data.llm, data.mcp);
   } catch (_) {}
   setTimeout(pollStatus, 10000);
 }

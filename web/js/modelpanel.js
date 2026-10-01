@@ -16,6 +16,7 @@ const GEN_FIELDS = [
 let defaults = {};
 let models = [];
 let status = null;
+let mcpStatus = null;
 let selected = null;
 let loading = false;
 let hooks = {};
@@ -116,6 +117,11 @@ export function setStatus(llm) {
   if (!models.length && llm.ok) loadModels();
 }
 
+export function setMcp(mcp) {
+  mcpStatus = mcp;
+  renderCurrent();
+}
+
 export function panelOpened() {
   if (!models.length) loadModels();
 }
@@ -133,6 +139,15 @@ function closePicker() {
 
 function currentInfo() {
   return status && status.ok ? status.info : null;
+}
+
+function mcpHint(info) {
+  if (!mcpStatus || !mcpStatus.enabled || !(mcpStatus.tools || []).length) return "";
+  const names = mcpStatus.tools.map((t) => t.name || t).join(", ");
+  if (info && info.caps && info.caps.tools) {
+    return `<p class="hint">Live tools for this model: ${esc(names)}. Each request includes the current date and time. The model is told to search whenever it does not know something, instead of saying it does not know or making an answer up.</p>`;
+  }
+  return `<p class="hint">This model cannot use tools, so live search, weather and stocks stay off. Load a model with the tools icon to enable them.</p>`;
 }
 
 function rateHTML(m) {
@@ -159,6 +174,7 @@ function renderCurrent() {
     </div>
     <div class="model-key">${esc(status.model)}</div>
     <div class="caps">${capsHTML(info)} ${rateHTML(info || {})}</div>
+    ${mcpHint(info)}
     ${info ? `<div class="model-meta">${[info.params, info.quant, fmtBytes(info.size),
       info.architecture, info.kind && info.kind !== "dense" ? info.kind.toUpperCase() : "",
       inst && inst.flash_attention != null ? "flash attention " + (inst.flash_attention ? "on" : "off") : "",

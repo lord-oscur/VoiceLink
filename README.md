@@ -72,17 +72,20 @@ needed.
   on disk (left panel). Voice, devices and effects are saved in this browser
   (profiles, export/import in the person icon).
 * The header pill shows the loaded model plus icons for thinking, tools and
-  vision. The right panel has the system prompt, context length and
-  generation settings (including reload/switch in LM Studio).
+  vision. Live search, weather and stocks are offered only when that tools
+  icon is present. The right panel has the system prompt, context length and
+  generation settings (including reload/switch in LM Studio). Each request
+  includes the current date and time.
 * The **voice icon** (top right) opens Voice (voices, pitch/age/emotion)
   and Devices (headphones, microphone, speaker, fan-noise filter, ignore-PC-playback,
   only-my-voice). The panel stays open until you use the orb or the text box.
 * Paperclip attaches files the model can actually use (images if it has
   vision, documents as text, audio/video transcribed).
 
-After `setup.bat`, VoiceLink itself runs **offline**. It only talks to LM
-Studio on this PC (`http://127.0.0.1:1234`). Unplug the network and it still
-works; `setup.bat` is the step that needs the internet.
+After `setup.bat`, speech (STT/TTS/VAD) and chat with LM Studio run
+**offline**. Live tools (web search, weather, stocks) need the internet
+and are offered only when the loaded model has tool use. `setup.bat` is
+still the step that downloads models.
 
 ---
 
@@ -186,7 +189,21 @@ keys you change; missing keys fall back to the defaults. Restart
 | `disable_thinking` | `true` | Turn reasoning off for fast replies (see above). |
 | `history_messages` | `40` | How many past messages are sent with each request. |
 | `auto_title` | `true` | Name new conversations with the LLM after the first reply. |
-| `system_prompt` | voice-oriented prompt | Keep the parts about "no markdown" and the em dash. |
+| `system_prompt` | voice-oriented prompt | Keep the parts about "no markdown" and the em dash. The current date/time is always appended at request time. |
+
+### `mcp` (stateless tools)
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `true` | Master switch. Off = no tools, no search instructions. |
+| `servers` | `[{"name":"local","url":"local"}]` | `local` is VoiceLink's search / weather / stock tools. Extra entries must be Streamable HTTP: `{"name":"…","url":"http://host/mcp"}`. stdio, `command`, and `/sse` servers are rejected. |
+
+Tools (`web_search`, `fetch_page`, `weather`, `stock_quote`) are sent to
+LM Studio only when the loaded model reports tool use. Each request also
+gets the current local date and time so the model knows how much time has
+passed since it was trained. When tools are offered, the model is told
+to search for anything it does not know — not only weather or stocks —
+instead of saying it does not know or inventing an answer. Tool results
+are never spoken; only the final reply is.
 
 ### `stt` (speech recognition, NVIDIA Parakeet TDT 0.6B v3)
 | Key | Default | Meaning |
@@ -268,10 +285,13 @@ browser page is just one).
   transcript of a committed turn), `ignored` (noise-only utterance),
   `assistant_delta` (reply text), `turn_done` (with timing metrics),
   `duck` / `unduck`, `stop` (discard audio of that turn now),
-  `reset_done`, `error`.
+  `reset_done`, `error`,
+  `tool` (`phase` `start`/`done`, `name`, `args` — never spoken).
 
-`GET /api/status` returns the LM Studio status, voices and languages as
-JSON.
+`GET /api/status` returns the LM Studio status, voices, languages and
+MCP tool list as JSON. `GET /api/mcp` is the same tool list with
+descriptions. `POST /mcp` is the stateless MCP endpoint (JSON-RPC;
+GET / SSE sessions are rejected).
 
 ---
 
@@ -304,7 +324,8 @@ voicelink/
   server.py     aiohttp web server, model loading, /ws endpoint
   session.py    duplex turn engine: VAD state machine, speculative turns,
                 barge-in, echo check, LLM→TTS pipeline, history
-  llm.py        LM Studio streaming client (thinking off, model auto-detect)
+  llm.py        LM Studio streaming client (thinking off, model auto-detect, tool loop)
+  mcp.py        stateless MCP hub: local search/weather/stocks + remote HTTP
   stt.py        Parakeet TDT via onnx-asr
   tts.py        Kokoro via kokoro-onnx, voice/language mapping
   vad.py        Silero VAD (streaming ONNX)

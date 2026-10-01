@@ -31,6 +31,7 @@ from . import attachments as att
 from .llm import LLMError
 from .textproc import (LANGUAGE_NAMES, EmotionSpanFilter, MOOD_TAG_HINT, SentenceChunker, clean_for_speech,
                        confident_language, detect_language, has_words, normalized_words, strip_emotion_tags)
+from .mcp import TOOLS_HINT, clock_line
 from .tts import SAMPLE_RATE as TTS_SR, voice_language
 from .denoise import Denoiser
 from .speaker import threshold as speaker_threshold
@@ -840,6 +841,9 @@ class Session:
         while keep and keep[0]["role"] != "user":
             keep = keep[1:]
         system = (self.system_prompt or self.cfg["llm"]["system_prompt"]).rstrip()
+        system = system + "\n\n" + clock_line()
+        if self._tools():
+            system = system + "\n\n" + TOOLS_HINT
         if MOOD_TAG_HINT not in system:
             system = system + "\n\n" + MOOD_TAG_HINT
         lock = self._locked_lang()
@@ -857,6 +861,14 @@ class Session:
                 content = att.llm_content(content, m["attachments"], vision)
             out.append({"role": m["role"], "content": content})
         return out
+
+    def _tools(self):
+        mcp = getattr(self.eng, "mcp", None)
+        if not mcp or not mcp.catalog():
+            return None
+        if not self.eng.llm or not self.eng.llm.can_tools():
+            return None
+        return mcp.openai()
 
     async def _run_turn(self, turn):
         try:
@@ -913,7 +925,18 @@ class Session:
                     tts_q.put_nowait((piece, mood))
 
             t0 = now()
-            async for delta in self.eng.llm.stream(messages, self.gen):
+            tools = self._tools()
+            if tools:
+                async def execute(name, args):
+                    turn.emit({"type": "tool", "turn": turn.id, "name": name,
+                               "phase": "start", "args": args})
+                    result = await self.eng.mcp.call(name, args)
+                    turn.emit({"type": "tool", "turn": turn.id, "name": name, "phase": "done"})
+                    return result
+                agen = self.eng.llm.generate(messages, self.gen, tools=tools, execute=execute)
+            else:
+                agen = self.eng.llm.stream(messages, self.gen)
+            async for delta in agen:
                 if "ttft_ms" not in turn.metrics:
                     turn.metrics["ttft_ms"] = round((now() - t0) * 1000)
                 turn.llm_raw += delta

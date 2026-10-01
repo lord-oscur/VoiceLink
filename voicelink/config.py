@@ -39,6 +39,13 @@ DEFAULTS = {
         "auto_title": True,  # name new conversations with the LLM after the first reply
         "system_prompt": DEFAULT_SYSTEM_PROMPT,
     },
+    "mcp": {
+        "enabled": True,
+        # Only Streamable HTTP / stateless MCP (POST /mcp). No stdio, no /sse.
+        # "local" is VoiceLink's own search/weather/stock tools. Extra entries
+        # must be {"name": "...", "url": "http://host/mcp"}.
+        "servers": [{"name": "local", "url": "local"}],
+    },
     "stt": {
         "model": "nemo-parakeet-tdt-0.6b-v3",
         "model_dir": "parakeet-tdt-0.6b-v3",
