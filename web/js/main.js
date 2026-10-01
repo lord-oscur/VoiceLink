@@ -9,6 +9,7 @@ import { initProfiles } from "./profiles.js";
 import { settings } from "./settings.js";
 import { $, capsHTML, esc, toast } from "./ui.js";
 import { languageList, resolveLanguages } from "./locale.js";
+import { initVoicePanel, onFilterMessage, refreshDevices, setCatalog } from "./voicepanel.js";
 
 hydrateIcons();
 
@@ -150,12 +151,20 @@ let previewSrc = null;
 async function playPreview(wav) {
   ensurePlayback();
   if (playCtx.state !== "running") await playCtx.resume();
-  const ab = await playCtx.decodeAudioData(wav);
+  const ab = await playCtx.decodeAudioData(wav.slice(0));
   if (previewSrc) try { previewSrc.stop(); } catch (_) {}
-  previewSrc = playCtx.createBufferSource();
-  previewSrc.buffer = ab;
-  previewSrc.connect(outGain);
-  previewSrc.start();
+  return new Promise((resolve) => {
+    previewSrc = playCtx.createBufferSource();
+    previewSrc.buffer = ab;
+    previewSrc.connect(outGain);
+    previewSrc.onended = resolve;
+    previewSrc.start();
+  });
+}
+
+function stopPreview() {
+  if (previewSrc) try { previewSrc.stop(); } catch (_) {}
+  previewSrc = null;
 }
 
 function stopPlayback(turn) {
@@ -201,6 +210,8 @@ function sendConfig() {
     gen: { temperature: m.temperature, top_p: m.top_p, top_k: m.top_k, repeat_penalty: m.repeat_penalty,
            max_tokens: m.max_tokens, history: m.history, thinking: !!m.thinking },
     languages: languageList(settings),
+    output_lang: settings.get("languages.output") || "voice",
+    incognito: !!$("incognito")?.checked,
   });
 }
 
@@ -260,7 +271,7 @@ function handle(m) {
     case "stop": stopPlayback(m.turn); break;
     case "reset_done":
       clearChat();
-      addMsg("system", "New conversation");
+      addMsg("system", m.incognito ? "New incognito conversation (not stored)" : "New conversation");
       history.setActive(null);
       break;
     case "conversation":
@@ -270,10 +281,10 @@ function handle(m) {
         if (msg.role === "assistant" && /\s—$/.test(msg.content)) el.classList.add("interrupted");
       }
       addMsg("system", `Continuing “${m.title}”`);
-      history.setActive(m.id);
+      history.setActive(m.id, { labels: m.labels, project_id: m.project_id });
       break;
     case "conv_saved":
-      history.saved(m.id, m.title);
+      history.saved(m.id, m.title, { labels: m.labels, project_id: m.project_id });
       break;
     case "error":
       addMsg("error", m.message);
@@ -510,16 +521,31 @@ function whenOpen(fn) {
   else setTimeout(() => whenOpen(fn), 150);
 }
 
-function newChat() { whenOpen(() => send({ type: "reset" })); }
+function newChat() {
+  whenOpen(() => send({ type: "reset", incognito: !!$("incognito").checked }));
+}
 function openConversation(id) { whenOpen(() => send({ type: "open", id })); }
 
 function applyPanels() {
   const left = !!settings.ui("left"), right = !!settings.ui("right");
+  const pane = settings.ui("rightPane") || "model";
   $("leftPanel").hidden = !left;
   $("rightPanel").hidden = !right;
   $("toggleLeft").classList.toggle("active", left);
-  $("toggleRight").classList.toggle("active", right);
-  if (right) panelOpened();
+  $("toggleRight").classList.toggle("active", right && pane === "model");
+  $("voiceBtn").classList.toggle("active", right && pane === "voice");
+  $("devicesBtn").classList.toggle("active", right && pane === "io");
+  $("pane-model").hidden = pane !== "model";
+  $("pane-voice").hidden = pane !== "voice";
+  $("pane-io").hidden = pane !== "io";
+  $("rightTitleText").textContent = { model: "Model", voice: "Voice", io: "Devices" }[pane];
+  $("rightTitleIcon").innerHTML = icon({ model: "chip", voice: "voice", io: "speaker" }[pane]);
+  $("modelRefresh").hidden = pane !== "model";
+  $("loadFoot").hidden = pane !== "model";
+  if (right) {
+    panelOpened();
+    if (pane === "io") refreshDevices();
+  }
 }
 
 function togglePanel(side) {
@@ -527,9 +553,21 @@ function togglePanel(side) {
   applyPanels();
 }
 
+function openRight(pane) {
+  if (settings.ui("right") && settings.ui("rightPane") === pane) {
+    settings.setUI("right", false);
+  } else {
+    settings.setUI("rightPane", pane);
+    settings.setUI("right", true);
+  }
+  applyPanels();
+}
+
 $("toggleLeft").onclick = () => togglePanel("left");
-$("toggleRight").onclick = () => togglePanel("right");
-els.pill.onclick = () => togglePanel("right");
+$("toggleRight").onclick = () => openRight("model");
+$("voiceBtn").onclick = () => openRight("voice");
+$("devicesBtn").onclick = () => openRight("io");
+els.pill.onclick = () => openRight("model");
 
 settings.onChange((paths) => {
   const all = paths.includes("*");
@@ -541,7 +579,8 @@ settings.onChange((paths) => {
 });
 
 initVoicePanel({
-  playPreview, lang: () => lastLang, send: (obj) => whenOpen(() => send(obj)),
+  playPreview, stopPreview, lang: () => lastLang, send: (obj) => whenOpen(() => send(obj)),
+  sendUser: (text) => whenOpen(() => send({ type: "text", text })),
   ensureStarted: async () => {
     await start();
     if (!capCtx) { toast("The microphone is not available", "error"); return false; }
@@ -550,7 +589,11 @@ initVoicePanel({
   },
 });
 initProfiles();
-history.initHistory({ newChat, open: openConversation });
+history.initHistory({
+  newChat, open: openConversation,
+  incognito: (on) => whenOpen(() => send({ type: "config", incognito: !!on })),
+  meta: (m) => whenOpen(() => send({ type: "conv_meta", labels: m.labels, project_id: m.project_id })),
+});
 editor.initEditor();
 attach.initAttach({ send: (obj) => whenOpen(() => send(obj)) });
 initModelPanel({ statusChanged: (llm) => { if (llm) showLLM(llm); else pollStatus(); } });

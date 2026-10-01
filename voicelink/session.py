@@ -29,9 +29,9 @@ import numpy as np
 
 from . import attachments as att
 from .llm import LLMError
-from .textproc import (LANGUAGE_NAMES, SentenceChunker, clean_for_speech, confident_language, detect_language,
-                       has_words, normalized_words)
-from .tts import SAMPLE_RATE as TTS_SR
+from .textproc import (LANGUAGE_NAMES, EmotionSpanFilter, MOOD_TAG_HINT, SentenceChunker, clean_for_speech,
+                       confident_language, detect_language, has_words, normalized_words, strip_emotion_tags)
+from .tts import SAMPLE_RATE as TTS_SR, voice_language
 from .denoise import Denoiser
 from .speaker import threshold as speaker_threshold
 from .vad import FRAME, SAMPLE_RATE, SileroVAD
@@ -115,6 +115,7 @@ class Turn:
         self.lang = None
         self.user_lang = None
         self.attachments = []
+        self.llm_raw = ""           # assistant tokens including mood tags
         self.metrics = {}
         if speech_end:
             self.metrics["start_ms"] = round((now() - speech_end) * 1000)
@@ -159,11 +160,16 @@ class Session:
         self.history = []
         self.conv_id = None
         self.titled = False
+        self.incognito = False
+        self._skip_persist = False
+        self.labels = []
+        self.project_id = None
         self.pending = {}           # attachments waiting for the next user turn (id -> record)
         self.gen = {}
         self.system_prompt = None
         self.langs = self.cfg["stt"]["languages"] or None
         self.lang = (self.langs or ["en"])[0]
+        self.output_lang = "voice"
         self.headphones = False
         self.voice = None
         self.gender = None
@@ -297,6 +303,15 @@ class Session:
                     self.langs = allowed
                     if self.lang not in allowed:
                         self.lang = allowed[0]
+            if "output_lang" in msg:
+                v = msg["output_lang"]
+                if v in ("voice", "auto") or v in LANGUAGE_NAMES:
+                    self.output_lang = v
+            if "incognito" in msg:
+                self.incognito = bool(msg["incognito"])
+                if self.incognito:
+                    self._skip_persist = True
+                    log.info("Incognito on: this chat will not be written to disk")
         elif kind == "text":
             text = (msg.get("text") or "").strip()
             if text or self.pending:
@@ -337,8 +352,26 @@ class Session:
             self.history = []
             self.conv_id = None
             self.titled = False
-            self.send({"type": "reset_done"})
+            self.labels = []
+            self.project_id = None
+            if "incognito" in msg:
+                self.incognito = bool(msg["incognito"])
+            self._skip_persist = self.incognito
+            self.send({"type": "reset_done", "incognito": self.incognito})
             self._refresh_state()
+        elif kind == "conv_meta":
+            if "labels" in msg and isinstance(msg["labels"], list):
+                self.labels = [str(x).strip()[:40] for x in msg["labels"] if str(x).strip()]
+            if "project_id" in msg:
+                self.project_id = msg["project_id"] or None
+            if self.conv_id and not self.incognito:
+                try:
+                    conv = self.eng.store.update(self.conv_id, labels=self.labels,
+                                                 project_id=self.project_id)
+                    self.send({"type": "conv_saved", "id": conv["id"], "title": conv.get("title"),
+                               "labels": conv.get("labels") or [], "project_id": conv.get("project_id")})
+                except (KeyError, OSError, ValueError) as e:
+                    log.warning("Could not update conversation meta: %s", e)
         elif kind == "open":
             try:
                 conv = self.eng.store.get(msg.get("id"))
@@ -350,9 +383,20 @@ class Session:
             self.history = conv.get("messages", [])
             self.conv_id = conv["id"]
             self.titled = True
-            shown = [dict(m, attachments=[att.public(a) for a in m["attachments"]]) if m.get("attachments") else m
-                     for m in self.history]
-            self.send({"type": "conversation", "id": conv["id"], "title": conv.get("title"), "messages": shown})
+            self.incognito = False
+            self._skip_persist = False
+            self.labels = list(conv.get("labels") or [])
+            self.project_id = conv.get("project_id") or None
+            shown = []
+            for m in self.history:
+                row = dict(m)
+                if m.get("attachments"):
+                    row["attachments"] = [att.public(a) for a in m["attachments"]]
+                if row.get("role") == "assistant" and isinstance(row.get("content"), str):
+                    row["content"] = strip_emotion_tags(row["content"])
+                shown.append(row)
+            self.send({"type": "conversation", "id": conv["id"], "title": conv.get("title"),
+                       "messages": shown, "labels": self.labels, "project_id": self.project_id})
             self._refresh_state()
 
     def on_audio(self, data):
@@ -730,21 +774,24 @@ class Session:
             self.history.append({"role": "assistant", "content": text, "ts": _ts()})
             turn.hist_idx = len(self.history) - 1
         self._persist()
-        if text and not turn.interrupted and not self.titled and self.cfg["llm"].get("auto_title", True):
+        if (text and not turn.interrupted and not self.titled and not self.incognito
+                and not self._skip_persist and self.cfg["llm"].get("auto_title", True)):
             self.titled = True
             asyncio.create_task(self._auto_title(self.conv_id))
 
     def _persist(self):
-        if not self.history:
+        if not self.history or self.incognito or self._skip_persist:
             return
         if not self.conv_id:
             self.conv_id = self.eng.store.new_id()
         try:
-            conv = self.eng.store.save(self.conv_id, self.history, model=self.eng.llm.model)
+            conv = self.eng.store.save(self.conv_id, self.history, model=self.eng.llm.model,
+                                      labels=self.labels, project_id=self.project_id)
         except OSError as e:
             log.warning("Could not save the conversation: %s", e)
             return
-        self.send({"type": "conv_saved", "id": conv["id"], "title": conv["title"]})
+        self.send({"type": "conv_saved", "id": conv["id"], "title": conv["title"],
+                   "labels": conv.get("labels") or [], "project_id": conv.get("project_id")})
 
     async def _auto_title(self, cid):
         """Names a new conversation after its first exchange (in the background)."""
@@ -758,7 +805,7 @@ class Session:
             log.debug("Auto title failed: %s", e)
             return
         title = title.strip().strip("\"'«»“”*#.").splitlines()[0].strip() if title.strip() else ""
-        if not title or cid is None or cid != self.conv_id:
+        if not title or cid is None or cid != self.conv_id or self.incognito:
             return
         try:
             conv = self.eng.store.rename(cid, title[:80])
@@ -779,12 +826,29 @@ class Session:
             hist.append(m)
         return hist
 
+    def _locked_lang(self):
+        """ISO language the model and TTS must stay in, or None to follow speech."""
+        if self.output_lang == "voice":
+            return voice_language(self.voice) if self.voice else None
+        if self.output_lang in LANGUAGE_NAMES:
+            return self.output_lang
+        return None
+
     def _messages(self, hist):
         limit = int(self.gen.get("history") or self.cfg["llm"]["history_messages"])
         keep = hist[-limit:]
         while keep and keep[0]["role"] != "user":
             keep = keep[1:]
-        system = self.system_prompt or self.cfg["llm"]["system_prompt"]
+        system = (self.system_prompt or self.cfg["llm"]["system_prompt"]).rstrip()
+        if MOOD_TAG_HINT not in system:
+            system = system + "\n\n" + MOOD_TAG_HINT
+        lock = self._locked_lang()
+        if lock:
+            name = LANGUAGE_NAMES.get(lock, lock)
+            system += (
+                f"\n\nAlways reply in {name} only. Do not switch languages "
+                "even if the user writes in another language."
+            )
         vision = bool(((self.eng.llm.info or {}).get("caps") or {}).get("vision"))
         out = [{"role": "system", "content": system}]
         for m in keep:
@@ -819,28 +883,50 @@ class Session:
 
             messages = self._messages(hist)
             turn.user_lang = confident_language(text, self.langs)
-            if turn.user_lang and len(self.langs or ()) != 1:
-                name = LANGUAGE_NAMES.get(turn.user_lang, turn.user_lang)
+            reply_lang = self._locked_lang() or (
+                turn.user_lang if turn.user_lang and len(self.langs or ()) != 1 else None)
+            if reply_lang:
+                name = LANGUAGE_NAMES.get(reply_lang, reply_lang)
                 last = messages[-1]["content"]
                 if isinstance(last, list):
-                    last = [dict(last[0], text=f"{last[0]['text']}\n\n(Reply in {name}.)")] + last[1:]
+                    last = [dict(last[0], text=f"{last[0]['text']}\n\n(Reply in {name} only.)")] + last[1:]
                 else:
-                    last = f"{last}\n\n(Reply in {name}.)"
+                    last = f"{last}\n\n(Reply in {name} only.)"
                 messages[-1] = {"role": "user", "content": last}
 
             tc = self.cfg["tts"]
             chunker = SentenceChunker(tc["first_chunk_min_chars"], tc["chunk_max_chars"],
                                       tc["first_chunk_wait_ms"] / 1000.0)
+            spans = EmotionSpanFilter()
+            mood = None
+
+            def pump(visible, next_mood, t=None):
+                nonlocal mood
+                if not visible:
+                    return
+                if next_mood != mood:
+                    for piece in chunker.flush():
+                        tts_q.put_nowait((piece, mood))
+                    mood = next_mood
+                for piece in chunker.feed(visible, t):
+                    turn.metrics.setdefault("text_ready_ms", round((now() - turn.speech_end) * 1000))
+                    tts_q.put_nowait((piece, mood))
+
             t0 = now()
             async for delta in self.eng.llm.stream(messages, self.gen):
                 if "ttft_ms" not in turn.metrics:
                     turn.metrics["ttft_ms"] = round((now() - t0) * 1000)
-                turn.emit({"type": "assistant_delta", "turn": turn.id, "text": delta})
-                for chunk in chunker.feed(delta, now()):
-                    turn.metrics.setdefault("text_ready_ms", round((now() - turn.speech_end) * 1000))
-                    tts_q.put_nowait(chunk)
-            for chunk in chunker.flush():
-                tts_q.put_nowait(chunk)
+                turn.llm_raw += delta
+                for next_mood, visible in spans.feed(delta):
+                    if visible:
+                        turn.emit({"type": "assistant_delta", "turn": turn.id, "text": visible})
+                        pump(visible, next_mood, now())
+            for next_mood, visible in spans.flush():
+                if visible:
+                    turn.emit({"type": "assistant_delta", "turn": turn.id, "text": visible})
+                    pump(visible, next_mood, now())
+            for piece in chunker.flush():
+                tts_q.put_nowait((piece, mood))
             turn.metrics["llm_ms"] = round((now() - t0) * 1000)
             tts_q.put_nowait(None)
             await tts
@@ -849,7 +935,8 @@ class Session:
             await sender
             turn.done = True
             if not turn.interrupted:
-                self._store_assistant(turn, " ".join(s for s, _, _ in turn.segments))
+                stored = turn.llm_raw.strip() or " ".join(s for s, _, _ in turn.segments)
+                self._store_assistant(turn, stored)
             log.info("Turn %d %s", turn.id, turn.metrics)
             self._refresh_state()
         except asyncio.CancelledError:
@@ -870,22 +957,27 @@ class Session:
         loop = asyncio.get_running_loop()
         seg = 0
         while True:
-            chunk = await q.get()
-            if chunk is None:
+            item = await q.get()
+            if item is None:
                 return
+            chunk, mood = item if isinstance(item, tuple) else (item, None)
             speech = clean_for_speech(chunk)
             if not has_words(speech):
                 continue
             if turn.lang is None:
-                turn.lang = detect_language(speech, self.langs, default=turn.user_lang or self.lang)
+                turn.lang = self._locked_lang() or detect_language(
+                    speech, self.langs, default=turn.user_lang or self.lang)
                 self.lang = turn.lang
+            fx = dict(self.fx or {})
+            if mood:
+                fx["emotion"] = mood
             t0 = now()
             audio = await loop.run_in_executor(self.eng.tts_pool, self.eng.tts.speak, speech, turn.lang,
-                                               self.voice, self.speed, self.gender, self.fx)
+                                               self.voice, self.speed, self.gender, fx)
             if not len(audio):
                 continue
-            log.debug("turn %d seg %d: %.0f ms for %.2fs audio: %r", turn.id, seg,
-                      (now() - t0) * 1000, len(audio) / TTS_SR, speech)
+            log.debug("turn %d seg %d: %.0f ms for %.2fs audio %s: %r", turn.id, seg,
+                      (now() - t0) * 1000, len(audio) / TTS_SR, mood or "none", speech)
             if seg == 0:
                 turn.metrics["tts_first_ms"] = round((now() - t0) * 1000)
             tail = speech.rstrip("\"')]»”")[-1:]
@@ -893,7 +985,8 @@ class Session:
             audio = np.concatenate([audio, np.zeros(int(pause * TTS_SR), dtype=np.float32)])
             pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
             turn.emit({"type": "seg", "turn": turn.id, "seg": seg, "text": speech,
-                       "duration": round(len(audio) / TTS_SR, 3), "lang": turn.lang})
+                       "duration": round(len(audio) / TTS_SR, 3), "lang": turn.lang,
+                       "emotion": mood or None})
             turn.emit((seg, speech, len(audio) / TTS_SR, struct.pack("<II", turn.id, seg) + pcm))
             seg += 1
 

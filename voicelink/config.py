@@ -11,9 +11,10 @@ DEFAULT_SYSTEM_PROMPT = (
     "You are a warm, quick-witted voice assistant having a real-time spoken conversation. "
     "Everything you write is read aloud by a text-to-speech engine, so: "
     "keep replies short and natural (usually one to three sentences) unless the user asks for detail; "
-    "never use markdown, bullet lists, headings, code blocks, tables, emojis or special symbols; "
+    "never use markdown, bullet lists, headings, code blocks, tables, emojis or special symbols, "
+    "except the mood tags described at the end of this prompt; "
     "write numbers, dates and units the way a person would say them. "
-    "Always reply in the same language the user is speaking. "
+    "Reply in the language the user is speaking unless a later instruction names a specific language — then stay in that language. "
     "The user may interrupt you while you talk; an assistant message ending with an em dash means "
     "you were cut off at that point and the user did not hear the rest, so continue naturally."
 )
@@ -30,6 +31,8 @@ DEFAULTS = {
         "api_key": "lm-studio",
         "temperature": 0.7,
         "top_p": 0.9,
+        "top_k": 40,
+        "repeat_penalty": 1.1,
         "max_tokens": 512,
         "disable_thinking": True,
         "history_messages": 40,

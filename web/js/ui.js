@@ -28,10 +28,11 @@ export function capsHTML(info, { context = true } = {}) {
   const out = [];
   if (c.reasoning) {
     const opts = (c.reasoning.allowed_options || []).join(", ");
-    out.push(`<span class="cap think" title="Reasoning / thinking${opts ? " (" + esc(opts) + ")" : ""}">${icon("brain")}</span>`);
+    const def = c.reasoning.default ? `, default ${c.reasoning.default}` : "";
+    out.push(`<span class="cap think" title="LM Studio: reasoning / thinking${opts ? " (" + esc(opts + def) + ")" : ""}">${icon("brain")}</span>`);
   }
-  if (c.tools) out.push(`<span class="cap tools" title="Trained for tool use">${icon("tools")}</span>`);
-  if (c.vision) out.push(`<span class="cap vision" title="Vision: understands images">${icon("eye")}</span>`);
+  if (c.tools) out.push(`<span class="cap tools" title="LM Studio: trained for tool use">${icon("tools")}</span>`);
+  if (c.vision) out.push(`<span class="cap vision" title="LM Studio: vision (understands images)">${icon("eye")}</span>`);
   const ctx = info.instances && info.instances[0] && info.instances[0].context_length;
   if (context && (ctx || info.max_context)) {
     const t = ctx ? `Loaded context: ${ctx.toLocaleString()} tokens (model max ${(info.max_context || 0).toLocaleString()})`

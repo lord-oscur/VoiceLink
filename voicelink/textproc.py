@@ -1,5 +1,5 @@
-"""Text utilities: think-tag filtering, speech cleanup, streaming sentence
-chunking and a tiny stop-word language detector."""
+"""Text utilities: think-tag filtering, mood-span tags, speech cleanup,
+streaming sentence chunking and a tiny stop-word language detector."""
 import re
 import unicodedata
 
@@ -42,6 +42,101 @@ class ThinkFilter:
     def flush(self):
         rest, self.buf = ("" if self.inside else self.buf), ""
         return rest
+
+
+# ---------------------------------------------------------- mood span tags
+# The LLM wraps dialogue in HTML-like tags (<angry>...</angry>). Tags are
+# stripped from the spoken/visible text; the open tag's name is attached to
+# each span so TTS can run the matching voicefx preset on that chunk only.
+
+MOOD_TAGS = ("happy", "excited", "calm", "sad", "angry", "fearful", "whisper")
+_MOOD = frozenset(MOOD_TAGS)
+_MOOD_TAG = re.compile(r"</?([A-Za-z][A-Za-z0-9]*)(?:\s[^>]*)?>")
+_MOOD_HOLD = re.compile(r"</?[A-Za-z][A-Za-z0-9]*(?:\s[^>]*)?$")
+
+MOOD_TAG_HINT = (
+    "When you read a story or quote a character whose mood is clear, wrap only "
+    "those spoken words in a matching tag so the voice can change for that span: "
+    "<angry>Get out!</angry> <sad>I miss you.</sad> "
+    "Use one of <happy> <excited> <calm> <sad> <angry> <fearful> <whisper>. "
+    "When a scene has more than one feeling, use a different tag for each line of dialogue. "
+    "Close every tag. Do not nest. Do not tag narration. Never say the tag names."
+)
+
+
+def _mood_hold(buf):
+    """Bytes at the end that might still become a tag when more tokens arrive."""
+    i = buf.rfind("<")
+    if i < 0:
+        return 0
+    tail = buf[i:]
+    if tail == "<" or tail == "</" or _MOOD_HOLD.match(tail):
+        return len(tail)
+    return 0
+
+
+class EmotionSpanFilter:
+    """Streaming splitter: yields (mood or None, visible_text) pieces."""
+
+    def __init__(self):
+        self.buf = ""
+        self.stack = []
+
+    @property
+    def mood(self):
+        return self.stack[-1] if self.stack else None
+
+    def _close(self, name):
+        if name in self.stack:
+            while self.stack:
+                if self.stack.pop() == name:
+                    break
+
+    def _add(self, out, text):
+        if not text:
+            return
+        mood = self.mood
+        if out and out[-1][0] == mood:
+            out[-1] = (mood, out[-1][1] + text)
+        else:
+            out.append((mood, text))
+
+    def feed(self, text):
+        self.buf += text
+        out = []
+        while self.buf:
+            m = _MOOD_TAG.search(self.buf)
+            if m:
+                self._add(out, self.buf[:m.start()])
+                name = m.group(1).lower()
+                closing = self.buf.startswith("</", m.start())
+                self.buf = self.buf[m.end():]
+                if name in _MOOD:
+                    if closing:
+                        self._close(name)
+                    else:
+                        self.stack.append(name)
+                continue
+            keep = _mood_hold(self.buf)
+            self._add(out, self.buf[:len(self.buf) - keep])
+            self.buf = self.buf[len(self.buf) - keep:]
+            break
+        return out
+
+    def flush(self):
+        rest, self.buf = self.buf, ""
+        if rest.startswith("<"):
+            rest = ""
+        out = []
+        self._add(out, rest)
+        return out
+
+
+def strip_emotion_tags(text):
+    """Visible text with mood tags removed (for the chat transcript)."""
+    f = EmotionSpanFilter()
+    parts = [t for _, t in f.feed(text or "")] + [t for _, t in f.flush()]
+    return "".join(parts)
 
 
 # ------------------------------------------------------------ speech cleanup

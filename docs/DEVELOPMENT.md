@@ -354,3 +354,34 @@ Other issues found and fixed along the way:
 6. Tuned threads (6 → 4 for TTS), isolated the test port, fixed text
    cleanup for non-Latin scripts and static caching, and wrote this
    documentation.
+
+## 10. UI v2 (layout, model picker, chat folders)
+
+See `changes_v2.md` for the requirement list. Notes from the implementation:
+
+* The right panel is three pages (Model / Voice / Devices). The old voice
+  hover popover is gone; the three toolbar icons open the matching page.
+  New chat **+** sits left of the brand, after the conversations toggle.
+  Settings profiles dock at the bottom of the left panel.
+* The model picker is a centered modal over `/api/v1/models` with a fixed
+  card height so refresh does not resize it. Type (dense / MoE / MTP),
+  +18 (`uncensored` or `NSFW` in the name, case-insensitive) and Not
+  Filtered (`Abliterated` in the name) are inferred from the key/name
+  when LM Studio does not expose them. Architecture and quant come from
+  the API.
+* REST load accepts `flash_attention` and `offload_kv_cache_to_gpu`. K/V
+  cache *quant* types are a TypeScript-SDK field; the UI offers them and
+  retries without the keys if LM Studio returns unrecognized/unknown.
+  V-cache controls stay disabled until flash attention is selected.
+* Saved system prompts live in the browser profile (`model.promptLibrary`).
+  The card title has save (new) and overwrite (selected) icons.
+  Generation fields show the value that will be sent (profile override or
+  `config.json` default). Top K defaults to 40, Repeat penalty to 1.1.
+* Output language defaults to the picked voice's language. The system
+  prompt and last user turn are told to stay in that language so Kokoro
+  is not given a different language than the voice's phoneme set.
+  *Follow what I speak* restores the old auto behaviour.
+* Labels and `project_id` are stored on each conversation JSON.
+  `data/projects.json` holds folder names. Incognito is a session flag:
+  nothing is written, including titles. Turning it off does not write the
+  current chat (`_skip_persist` stays set until New chat).

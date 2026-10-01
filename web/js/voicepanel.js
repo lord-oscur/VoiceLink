@@ -1,5 +1,6 @@
-// Voice & audio hover panel: voice choice, speed, devices (and effects).
-import { languageHint } from "./locale.js";
+// Voice and Devices pages in the right panel: voice, effects, mic/speaker filters.
+import { AGE_PRESETS, EMO_PRESETS, mergePreset, presetRows, readKey, writeKey } from "./fxpresets.js";
+import { languageHint, NAMES } from "./locale.js";
 import { canPickSpeaker, fillSelect, listDevices } from "./devices.js";
 import { settings } from "./settings.js";
 import { $, toast } from "./ui.js";
@@ -50,32 +51,50 @@ const EMOTIONS = [
   ["none", "Normal"], ["happy", "Happy"], ["excited", "Excited"], ["calm", "Calm"],
   ["sad", "Sad"], ["angry", "Angry"], ["fearful", "Fearful"], ["whisper", "Whisper"],
 ];
+const EMO_TOUR = [
+  ["none", "Normal", "This is my normal speaking voice, with no extra feeling."],
+  ["happy", "Happy", "I just heard the good news, and I cannot stop smiling."],
+  ["excited", "Excited", "We did it! I can hardly believe this is really happening!"],
+  ["calm", "Calm", "Everything is all right. There is no need to hurry."],
+  ["sad", "Sad", "I did not think it would end this way. I am sorry."],
+  ["angry", "Angry", "That is enough! I will not be spoken to like that!"],
+  ["fearful", "Fearful", "Something is wrong. I think we should get out of here."],
+  ["whisper", "Whisper", "Come closer. I can only say this very quietly."],
+];
+const EMO_ASK = "Read this short scene aloud. Wrap every line of dialogue in a mood tag, "
+  + "and use each of these tags exactly once: <happy> <excited> <calm> <sad> <angry> <fearful> <whisper>. "
+  + "Do not tag the narrator. Close every tag.\n\n"
+  + "The friends were in the kitchen.\n"
+  + "Maya laughed as she opened the letter.\n"
+  + "Leo could not stay in his chair.\n"
+  + "Jun poured tea and spoke slowly.\n"
+  + "Rita sat down and looked at the floor.\n"
+  + "Omar slammed his cup on the table.\n"
+  + "Nia glanced at the dark window.\n"
+  + "Sam leaned in so the others would not hear.";
 
 let catalog = [];
 let hooks = {};
 
 export function initVoicePanel(h) {
   hooks = h;
-  // Tabs
-  const tabs = document.querySelectorAll("#voicePanel .tabs button");
-  const showTab = (name) => {
-    for (const b of tabs) b.classList.toggle("active", b.dataset.tab === name);
-    for (const p of document.querySelectorAll("#voicePanel [data-pane]")) p.hidden = p.dataset.pane !== name;
-    settings.setUI("voiceTab", name);
-    if (name === "io") refreshDevices();
-  };
-  for (const b of tabs) b.onclick = () => showTab(b.dataset.tab);
-  showTab(settings.ui("voiceTab") || "voice");
 
   for (const b of document.querySelectorAll("#genderSeg button")) {
     b.onclick = () => settings.set("gender", b.dataset.g);
   }
-  $("voice").onchange = () => settings.set("voice", $("voice").value);
+  $("voice").onchange = () => {
+    settings.set("voice", $("voice").value);
+    previewPick($("previewBtn"));
+  };
+  $("outLang").onchange = () => settings.set("languages.output", $("outLang").value);
   $("headphones").onchange = () => settings.set("headphones", $("headphones").checked);
   $("previewBtn").onclick = () => preview($("previewBtn"));
-  $("fxPreview").onclick = () => preview($("fxPreview"));
+  $("emoTour").onclick = () => emotionTour();
+  $("emoAsk").onclick = () => askEveryMood();
   $("fxReset").onclick = () => {
-    settings.set("fx", { pitch: 0, timbre: 0, range: 100, volume: 0, age: "adult", emotion: "none", intensity: 60 });
+    lastAge = lastEmo = null;
+    settings.set("fx", { pitch: 0, timbre: 0, range: 100, volume: 0, age: "adult", emotion: "none", intensity: 60,
+                         ageCustom: {}, emoCustom: {} });
     settings.set("speed", 1.05);
   };
   buildSliders($("fxSliders"), FX_SLIDERS);
@@ -239,23 +258,108 @@ function buildChips(box, defs, path) {
     b.className = "chip";
     b.dataset.key = key;
     b.innerHTML = sub ? `${label}<small>${sub}</small>` : label;
-    b.onclick = () => settings.set(path, key);
+    b.onclick = () => {
+      settings.set(path, key);
+      previewPick($("previewBtn"));
+    };
     box.append(b);
   }
   box.dataset.path = path;
 }
 
 function renderFx() {
-  for (const input of document.querySelectorAll("#voicePanel .slider input")) {
+  for (const input of document.querySelectorAll("#pane-voice .slider input:not([data-preset]), #pane-io .slider input:not([data-preset])")) {
     input.value = settings.get(input.dataset.path);
     input.parentElement.querySelector("output").textContent = input._fmt(input.value);
   }
   for (const box of [$("ageChips"), $("emoChips")]) {
     const value = settings.get(box.dataset.path);
-    for (const b of box.children) b.classList.toggle("active", b.dataset.key === value);
+    for (const b of box.children) {
+      b.classList.toggle("active", b.dataset.key === value);
+      if (box.id === "emoChips") b.classList.toggle("playing", tourMood === b.dataset.key);
+    }
   }
   const emo = settings.get("fx.emotion");
   $("emoSliders").classList.toggle("disabled", !emo || emo === "none");
+  renderPresetEditors();
+}
+
+let lastAge = null;
+let lastEmo = null;
+
+function customBag(kind) {
+  return settings.get(kind === "age" ? "fx.ageCustom" : "fx.emoCustom") || {};
+}
+
+function livePreset(kind, name) {
+  const base = kind === "age" ? AGE_PRESETS[name] : EMO_PRESETS[name];
+  return mergePreset(base, customBag(kind)[name]);
+}
+
+function renderPresetEditors() {
+  const age = settings.get("fx.age") || "adult";
+  const emo = settings.get("fx.emotion") || "none";
+  fillPresetBox($("ageDetail"), "age", age, age !== lastAge);
+  fillPresetBox($("emoDetail"), "emo", emo, emo !== lastEmo);
+  lastAge = age;
+  lastEmo = emo;
+}
+
+function fillPresetBox(box, kind, name, rebuild) {
+  const rows = presetRows(livePreset(kind, name));
+  const labels = { age: "Age", emo: "Emotion" };
+  const empty = { adult: "Adult uses the original voice — no extra levels.",
+                  none: "No emotion overlay." };
+  if (!rows.length) {
+    box.hidden = !empty[name];
+    box.innerHTML = empty[name] ? `<p class="hint">${empty[name]}</p>` : "";
+    return;
+  }
+  box.hidden = false;
+  if (rebuild || !box.querySelector("[data-preset]")) {
+    box.innerHTML = `<div class="preset-head"><span>${labels[kind]} levels · <strong>${name}</strong></span>` +
+      `<button type="button" class="link-btn" data-reset hidden>Reset</button></div>` +
+      `<div class="sliders"></div>`;
+    const grid = box.querySelector(".sliders");
+    const reset = box.querySelector("[data-reset]");
+    reset.onclick = () => {
+      const bag = { ...customBag(kind) };
+      delete bag[name];
+      lastAge = lastEmo = null;
+      settings.set(kind === "age" ? "fx.ageCustom" : "fx.emoCustom", bag);
+      previewPick($("previewBtn"));
+    };
+    for (const row of rows) {
+      const wrap = document.createElement("label");
+      wrap.className = "slider";
+      wrap.innerHTML = `<span class="label">${row.label}<output></output></span>` +
+        `<input type="range" min="${row.min}" max="${row.max}" step="${row.step}" data-preset="${kind}">`;
+      const input = wrap.querySelector("input");
+      const out = wrap.querySelector("output");
+      input._fmt = row.fmt;
+      input._key = row.key;
+      input.value = row.value;
+      out.textContent = row.fmt(row.value);
+      input.oninput = () => { out.textContent = row.fmt(input.value); };
+      input.onchange = () => {
+        const next = writeKey(livePreset(kind, name), input._key, parseFloat(input.value));
+        const bag = { ...customBag(kind), [name]: next };
+        settings.set(kind === "age" ? "fx.ageCustom" : "fx.emoCustom", bag);
+        previewPick($("previewBtn"));
+      };
+      grid.append(wrap);
+    }
+    reset.hidden = !customBag(kind)[name];
+    return;
+  }
+  const reset = box.querySelector("[data-reset]");
+  if (reset) reset.hidden = !customBag(kind)[name];
+  for (const input of box.querySelectorAll("input[data-preset]")) {
+    const v = readKey(livePreset(kind, name), input._key);
+    if (v == null) continue;
+    input.value = v;
+    input.parentElement.querySelector("output").textContent = input._fmt(v);
+  }
 }
 
 export function setCatalog(data) {
@@ -304,11 +408,103 @@ function renderVoice() {
   }
   sel.value = current || "";
   $("headphones").checked = !!settings.get("headphones");
+  fillOutLang();
+}
+
+function fillOutLang() {
+  const sel = $("outLang");
+  if (!sel) return;
+  const keep = settings.get("languages.output") || "voice";
+  const voice = settings.get("voice") || "";
+  const voiceLang = voice ? (GROUP_LANG[voice[0]] || "en") : "";
+  const voiceName = voiceLang && NAMES[voiceLang] ? NAMES[voiceLang] : "";
+  sel.innerHTML = "";
+  sel.append(new Option(
+    voice && voiceName ? `Stay in the voice's language (${voiceName})` : "Stay in the voice's language",
+    "voice"));
+  sel.append(new Option("Follow what I speak", "auto"));
+  for (const [code, name] of Object.entries(NAMES)) sel.append(new Option(name, code));
+  sel.value = keep;
+}
+
+let tourToken = 0;
+let tourMood = null;
+let touring = false;
+
+function setTourLabel(running) {
+  const btn = $("emoTour");
+  const label = btn.querySelector("span");
+  if (label) label.textContent = running ? "Stop tour" : "Play all emotions";
+}
+
+function stopTour() {
+  tourToken += 1;
+  touring = false;
+  tourMood = null;
+  setTourLabel(false);
+  $("emoTourHint").textContent = "Hear every filter in order, using this voice, age and intensity. Ask the model sends a scene that should use each mood tag once.";
+  if (hooks.stopPreview) hooks.stopPreview();
+  renderFx();
+}
+
+async function emotionTour() {
+  if (touring) { stopTour(); return; }
+  const my = ++tourToken;
+  touring = true;
+  setTourLabel(true);
+  const voice = settings.get("voice");
+  const v = catalog.find((x) => x.id === voice);
+  const gender = settings.get("gender");
+  const baseFx = { ...settings.get("fx") };
+  try {
+    for (const [key, label, line] of EMO_TOUR) {
+      if (my !== tourToken) return;
+      tourMood = key;
+      $("emoTourHint").textContent = `Playing ${label}…`;
+      renderFx();
+      const r = await fetch("/api/preview", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          voice: voice || null, lang: v ? v.lang : (hooks.lang ? hooks.lang() : "en"),
+          speed: settings.get("speed"), gender: gender === "all" ? null : gender,
+          fx: { ...baseFx, emotion: key },
+          text: `${label}. ${line}`,
+        }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (my !== tourToken) return;
+      await hooks.playPreview(await r.arrayBuffer());
+    }
+    if (my === tourToken) $("emoTourHint").textContent = "Tour finished. Click a chip to keep one emotion, or Reset.";
+  } catch (e) {
+    if (my === tourToken) toast("Emotion tour failed: " + e.message, "error");
+  } finally {
+    if (my === tourToken) {
+      touring = false;
+      tourMood = null;
+      setTourLabel(false);
+      renderFx();
+    }
+  }
+}
+
+function askEveryMood() {
+  if (!hooks.sendUser) return;
+  hooks.sendUser(EMO_ASK);
+  toast("Sent a scene that should use every mood tag");
+}
+
+let previewToken = 0;
+
+function previewPick(btn) {
+  if (touring) return;
+  preview(btn);
 }
 
 async function preview(btn) {
-  if (btn.classList.contains("busy")) return;
-  btn.classList.add("busy");
+  const my = ++previewToken;
+  if (hooks.stopPreview) hooks.stopPreview();
+  if (btn) btn.classList.add("busy");
   try {
     const voice = settings.get("voice");
     const v = catalog.find((x) => x.id === voice);
@@ -321,11 +517,12 @@ async function preview(btn) {
       }),
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    if (my !== previewToken) return;
     await hooks.playPreview(await r.arrayBuffer());
   } catch (e) {
-    toast("Preview failed: " + e.message, "error");
+    if (my === previewToken) toast("Preview failed: " + e.message, "error");
   } finally {
-    btn.classList.remove("busy");
+    if (my === previewToken && btn) btn.classList.remove("busy");
   }
 }
 

@@ -6,7 +6,7 @@
 // Settings are deep-merged with DEFAULTS on read, so new keys appear automatically.
 
 const KEY = "voicelink.settings";
-const VERSION = 3;
+const VERSION = 4;
 
 export const DEFAULTS = {
   voice: "",                 // "" = automatic voice for the reply's language
@@ -14,7 +14,8 @@ export const DEFAULTS = {
   speed: 1.05,
   headphones: false,
   devices: { mic: "", speaker: "", showVirtual: false },
-  fx: { pitch: 0, timbre: 0, range: 100, volume: 0, age: "adult", emotion: "none", intensity: 60 },
+  fx: { pitch: 0, timbre: 0, range: 100, volume: 0, age: "adult", emotion: "none", intensity: 60,
+        ageCustom: {}, emoCustom: {} },
   input: {
     noise: "light", playbackGate: true, loopback: "",
     onlyMe: false, onlyMeStrict: 50, voiceprint: null, voiceprintDate: "",
@@ -22,12 +23,15 @@ export const DEFAULTS = {
   model: {
     systemPrompt: "", temperature: null, top_p: null, top_k: null, repeat_penalty: null,
     max_tokens: null, thinking: false, history: null,
+    promptLibrary: [],
+    attention: "flash", kvGpu: true, kCache: "", vCache: "",
+    hfIgnoreVram: false, hfVramGb: null,
   },
   editor: { check: true, lang: "auto" },
-  languages: { second: "", source: "", manual: false },
+  languages: { second: "", source: "", manual: false, output: "voice" },
 };
 
-const UI_DEFAULTS = { left: true, right: false, voiceTab: "voice" };
+const UI_DEFAULTS = { left: true, right: false, rightPane: "model" };
 
 const isObj = (v) => v && typeof v === "object" && !Array.isArray(v);
 const clone = (v) => JSON.parse(JSON.stringify(v));
@@ -72,8 +76,8 @@ function load() {
     for (const p of Object.values(data.profiles)) {
       if (isObj(p) && isObj(p.input)) p.input.playbackGate = true;
     }
-    data.version = VERSION;
   }
+  data.version = VERSION;
   return data;
 }
 

@@ -1,6 +1,7 @@
 """Streaming client for LM Studio's OpenAI-compatible API."""
 import json
 import logging
+import re
 
 import aiohttp
 
@@ -15,33 +16,131 @@ class LLMError(Exception):
     pass
 
 
-def _model_v1(m):
-    caps = m.get("capabilities") or {}
-    reasoning = caps.get("reasoning") or None
-    instances = [{"id": i["id"], "context_length": (i.get("config") or {}).get("context_length"),
-                  "flash_attention": (i.get("config") or {}).get("flash_attention")}
-                 for i in m.get("loaded_instances") or []]
-    quant = m.get("quantization")
+def _parse_caps(caps):
+    """Icons only when LM Studio actually flags the capability (not an empty {})."""
+    if not isinstance(caps, dict):
+        caps = {}
+    raw = caps.get("reasoning")
+    reasoning = None
+    if isinstance(raw, dict) and (raw.get("allowed_options") or raw.get("default") or raw.get("status")):
+        reasoning = raw
+    elif raw is True:
+        reasoning = {"allowed_options": ["on"]}
     return {
+        "vision": bool(caps.get("vision")),
+        "tools": caps.get("trained_for_tool_use") is True,
+        "reasoning": reasoning,
+    }
+
+
+def _attention_from_config(cfg):
+    """Standard vs flash, plus any other attention keys LM Studio reports."""
+    kinds = ["flash" if cfg.get("flash_attention") else "standard"]
+    for k, v in (cfg or {}).items():
+        kl = k.lower()
+        if "attention" in kl and kl != "flash_attention" and v not in (None, "", False):
+            kinds.append(f"{k}={v}" if not isinstance(v, bool) else k)
+    return kinds
+
+
+# Raw llama.cpp / LM Studio architecture → family shown in the picker.
+_ARCH_FAMILY = (
+    ("qwen", "Qwen"), ("llama", "Llama"), ("gemma", "Gemma"), ("phi", "Phi"),
+    ("lfm", "LFM"), ("granite", "Granite"), ("nemotron", "Nemotron"),
+    ("gpt", "GPT"), ("mistral", "Mistral"), ("mixtral", "Mistral"),
+)
+
+
+def _families(blob, arch):
+    """Model families for the picker (Qwen, Llama, Ternary, Gemma, Opus, …)."""
+    out = []
+    if re.search(r"ternary|bitnet|\bbonsai\b", blob):
+        out.append("Ternary")
+    if re.search(r"\bopus\b", blob):
+        out.append("Opus")
+    arch_l = (arch or "").lower()
+    hit = False
+    for prefix, fam in _ARCH_FAMILY:
+        if arch_l.startswith(prefix) or re.search(r"\b" + re.escape(prefix), blob):
+            if fam not in out:
+                out.append(fam)
+            hit = True
+            break
+    if not hit and arch:
+        pretty = arch.replace("_", " ").replace("-", " ").strip().title()
+        if pretty and pretty not in out:
+            out.append(pretty)
+    return out
+
+
+def _infer_flags(m):
+    key = m.get("key") or m.get("id") or ""
+    name = m.get("display_name") or key
+    arch = (m.get("architecture") or "")
+    quant = m.get("quantization")
+    quant_s = quant.get("name") if isinstance(quant, dict) else (quant or "")
+    blob = f"{key} {name} {arch} {quant_s}".lower()
+    experts = m.get("num_experts") or m.get("n_experts") or m.get("expert_count")
+    if experts is None:
+        mx = re.search(r"(\d+)\s*x\s*[\d.]+", blob)
+        if mx:
+            experts = int(mx.group(1))
+    try:
+        experts = int(experts) if experts is not None else None
+    except (TypeError, ValueError):
+        experts = None
+    moe = bool(experts and experts > 1) or "moe" in (arch or "").lower() or bool(
+        re.search(r"\bmoe\b|mixtral|a3b|a22b|\be[24]b\b", blob))
+    mtp = bool(re.search(r"\bmtp\b", blob))
+    families = _families(blob, arch)
+    return {
+        "architecture": arch or None,
+        "family": families[0] if families else None,
+        "families": families,
+        "experts": experts,
+        "moe": moe,
+        "mtp": mtp,
+        "kind": "mtp" if mtp else ("moe" if moe else "dense"),
+        "nsfw": bool(re.search(r"uncensored|nsfw|\+?18\+|erotica", blob, re.I)),
+        "abliterated": "abliterated" in blob,
+    }
+
+
+def _model_v1(m):
+    instances = []
+    for i in m.get("loaded_instances") or []:
+        cfg = i.get("config") or {}
+        instances.append({
+            "id": i["id"], "context_length": cfg.get("context_length"),
+            "flash_attention": cfg.get("flash_attention"),
+            "offload_kv_cache_to_gpu": cfg.get("offload_kv_cache_to_gpu"),
+            "attention": _attention_from_config(cfg),
+        })
+    quant = m.get("quantization")
+    row = {
         "key": m["key"], "name": m.get("display_name") or m["key"], "type": m.get("type"),
         "params": m.get("params_string"), "quant": quant.get("name") if isinstance(quant, dict) else quant,
         "size": m.get("size_bytes"), "max_context": m.get("max_context_length"),
         "loaded": bool(instances), "instances": instances,
-        "caps": {"vision": bool(caps.get("vision")), "tools": bool(caps.get("trained_for_tool_use")),
-                 "reasoning": reasoning},
+        "caps": _parse_caps(m.get("capabilities")),
     }
+    row.update(_infer_flags(m))
+    return row
 
 
 def _model_v0(m):
     caps = m.get("capabilities") or []
     loaded = m.get("state") == "loaded"
-    return {
+    row = {
         "key": m["id"], "name": m["id"], "type": m.get("type"), "params": None, "quant": m.get("quantization"),
         "size": None, "max_context": m.get("max_context_length"), "loaded": loaded,
         "instances": [{"id": m["id"], "context_length": m.get("loaded_context_length"),
-                       "flash_attention": None}] if loaded else [],
+                       "flash_attention": None, "offload_kv_cache_to_gpu": None,
+                       "attention": []}] if loaded else [],
         "caps": {"vision": m.get("type") == "vlm", "tools": "tool_use" in caps, "reasoning": None},
     }
+    row.update(_infer_flags(m))
+    return row
 
 
 class LMStudioClient:
@@ -117,7 +216,9 @@ class LMStudioClient:
         except Exception as e:
             return {"ok": False, "error": str(e) or type(e).__name__, "base_url": self.base}
 
-    async def load(self, key, context_length=None, flash_attention=None, unload_others=True):
+    async def load(self, key, context_length=None, flash_attention=None,
+                   offload_kv_cache_to_gpu=None, k_cache=None, v_cache=None,
+                   unload_others=True):
         """Loads `key` with the given settings, replacing loaded LLM instances."""
         if unload_others:
             for m in await self.models():
@@ -129,10 +230,38 @@ class LMStudioClient:
             body["context_length"] = int(context_length)
         if flash_attention is not None:
             body["flash_attention"] = bool(flash_attention)
-        result = await self._post_json("/api/v1/models/load", body, timeout=600)
+        if offload_kv_cache_to_gpu is not None:
+            body["offload_kv_cache_to_gpu"] = bool(offload_kv_cache_to_gpu)
+        extra = {}
+        if k_cache:
+            extra["llama_k_cache_quantization_type"] = k_cache
+        if v_cache and flash_attention:
+            extra["llama_v_cache_quantization_type"] = v_cache
+        result = await self._load_with_fallback(body, extra)
         self.model = result.get("instance_id") or key
         self.info = None
         return result
+
+    async def _load_with_fallback(self, body, extra):
+        """REST often rejects K/V quant keys; retry without them if so."""
+        try:
+            return await self._post_json("/api/v1/models/load", {**body, **extra}, timeout=600)
+        except LLMError as e:
+            text = str(e).lower()
+            if extra and ("unrecognized" in text or "unknown" in text or "unexpected" in text):
+                log.info("LM Studio rejected K/V cache types; loading without them")
+                return await self._post_json("/api/v1/models/load", body, timeout=600)
+            raise
+
+    async def download(self, model, quantization=None):
+        """Ask LM Studio to pull a catalog id or Hugging Face GGUF repo."""
+        body = {"model": model}
+        if quantization:
+            body["quantization"] = quantization
+        return await self._post_json("/api/v1/models/download", body, timeout=60)
+
+    async def download_status(self, job_id):
+        return await self._get_json("/api/v1/models/download/status/" + job_id)
 
     async def _post_json(self, path, body, timeout=30):
         async with self.http.post(self.base + path, json=body, headers=self.headers,

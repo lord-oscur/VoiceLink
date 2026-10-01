@@ -74,9 +74,9 @@ needed.
 * The header pill shows the loaded model plus icons for thinking, tools and
   vision. The right panel has the system prompt, context length and
   generation settings (including reload/switch in LM Studio).
-* The **voice icon** (top right) opens Voice, Effects (pitch/age/emotion)
-  and Devices (microphone, speaker, fan-noise filter, ignore-PC-playback,
-  only-my-voice).
+* The **voice icon** (top right) opens Voice (voices, pitch/age/emotion)
+  and Devices (headphones, microphone, speaker, fan-noise filter, ignore-PC-playback,
+  only-my-voice). The panel stays open until you use the orb or the text box.
 * Paperclip attaches files the model can actually use (images if it has
   vision, documents as text, audio/video transcribed).
 
@@ -139,6 +139,17 @@ if the model still starts thinking, it retries once with the documented
 empty-think prefill and remembers which method works. `<think>` blocks are
 also filtered out of the speech. Set `llm.disable_thinking` to `false` to
 allow thinking.
+
+**Mood tags.** When the model reads a story, it may wrap a character's line
+in HTML-like tags (`<angry>Get out!</angry>`, also `sad`, `happy`, `excited`,
+`calm`, `fearful`, `whisper`). The tag names are stripped from the chat and
+are never spoken. Kokoro synthesizes the words as usual; VoiceLink then
+applies that emotion filter to **that audio chunk only**, so the narrator
+stays unchanged. A tag at the start of a span lasts until the matching
+close (or the end of the reply). The effects panel still sets the default
+voice; a tagged span overrides the emotion for those words. **Play all
+emotions** (Voice panel) speaks one line per filter so you can hear them.
+**Ask the model** sends a short scene that should use every mood tag once.
 
 **Languages.** English is always first. A second language is taken from the
 PC's OS locale, then its time zone, then the browser geolocation if that

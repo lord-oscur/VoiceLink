@@ -45,7 +45,7 @@ EMOTIONS = {
     "sad":     {"shift": -2.0, "range": 0.60, "rate": 0.86, "volume": -3.0, "formant": 0.98, "breath": 0.07},
     "angry":   {"shift": 1.0, "range": 1.30, "rate": 1.08, "volume": 4.0, "formant": 1.02, "drive": 0.6},
     "fearful": {"shift": 2.5, "range": 1.20, "rate": 1.10, "breath": 0.05, "tremor": (0.5, 7.0), "tremolo": 0.06},
-    "whisper": {"volume": -3.0, "whisper": 1.0, "rate": 0.95},
+    "whisper": {"volume": -6.0, "rate": 0.70},  # half volume, slower; no extra DSP
 }
 
 
@@ -55,6 +55,38 @@ def _num(v, default, lo, hi):
     except (TypeError, ValueError):
         return default
     return min(hi, max(lo, v)) if math.isfinite(v) else default
+
+
+def _pair(v, default):
+    if isinstance(v, (list, tuple)) and len(v) >= 2:
+        try:
+            return (float(v[0]), float(v[1]))
+        except (TypeError, ValueError):
+            return default
+    if isinstance(v, (int, float)):
+        return (float(v), float(v))
+    return default
+
+
+def merge_preset(base, over):
+    """Built-in preset plus the user's saved edits for that chip."""
+    out = dict(base or {})
+    if not isinstance(over, dict):
+        return out
+    for key, val in over.items():
+        if key in ("target_f0", "shift", "tremor") and isinstance(base.get(key), (list, tuple)):
+            out[key] = _pair(val, out.get(key))
+        elif key in ("formant", "range", "rate", "breath", "tremolo", "volume", "drive",
+                     "whisper", "shift") and not isinstance(val, (list, tuple)):
+            try:
+                out[key] = float(val)
+            except (TypeError, ValueError):
+                pass
+    return out
+
+
+def _preset(table, name, custom):
+    return merge_preset(table.get(name) or {}, (custom or {}).get(name) if isinstance(custom, dict) else None)
 
 
 def plan(fx, gender="female", voice_f0=None):
@@ -69,24 +101,32 @@ def plan(fx, gender="female", voice_f0=None):
     breath = whisper = drive = tremolo = 0.0
     tremor = (0.0, 5.5)
 
-    age = AGES.get(fx.get("age") or "none", {})
+    age = _preset(AGES, fx.get("age") or "none", fx.get("ageCustom"))
     if "target_f0" in age:
         target = age["target_f0"][1 if male else 0]
         base = voice_f0 or (120 if male else 190)
         ratio *= max(1.0, target / base)
     if "shift" in age:
-        ratio *= 2 ** (age["shift"][1 if male else 0] / 12)
+        sh = age["shift"]
+        sem = sh[1 if male else 0] if isinstance(sh, (list, tuple)) else sh
+        ratio *= 2 ** (float(sem) / 12)
     formant *= age.get("formant", 1.0)
     rng *= age.get("range", 1.0)
     rate *= age.get("rate", 1.0)
     breath += age.get("breath", 0.0)
     tremolo += age.get("tremolo", 0.0)
     if "tremor" in age:
-        tremor = age["tremor"]
+        tremor = _pair(age["tremor"], tremor)
 
-    emo = EMOTIONS.get(fx.get("emotion") or "none", {})
+    emo_name = fx.get("emotion") or "none"
+    emo = _preset(EMOTIONS, emo_name, fx.get("emoCustom"))
     k = _num(fx.get("intensity"), 60, 0, 100) / 100
-    if emo and k:
+    if emo_name == "whisper":
+        # Normal Kokoro audio only: half volume and slower. No noise or STFT mix
+        # (those sounded like a short echo).
+        volume += _num(emo.get("volume"), -6.0, -18, 6)
+        rate *= _num(emo.get("rate"), 0.70, 0.5, 1.2)
+    elif emo and k:
         ratio *= 2 ** (emo.get("shift", 0.0) * k / 12)
         formant *= emo.get("formant", 1.0) ** k
         rng *= emo.get("range", 1.0) ** k
@@ -97,7 +137,8 @@ def plan(fx, gender="female", voice_f0=None):
         drive = emo.get("drive", 0.0) * k
         tremolo += emo.get("tremolo", 0.0) * k
         if "tremor" in emo:
-            tremor = (tremor[0] + emo["tremor"][0] * k, emo["tremor"][1])
+            t = _pair(emo["tremor"], (0.0, 5.5))
+            tremor = (tremor[0] + t[0] * k, t[1])
 
     p = {"ratio": ratio, "formant": formant, "range": rng, "rate": rate, "volume": volume,
          "breath": min(breath, 1.0), "whisper": min(whisper, 1.0), "drive": drive,
@@ -160,24 +201,43 @@ def _tremor(x, sr, depth_st, freq, tremolo):
     return x
 
 
+def _whisper_air(x, sr, amount, rng):
+    """Quiet whisper: duck the voice and add envelope-followed hiss.
+
+    A random-phase STFT copy of the voice sounds like a short echo, so this
+    uses high-passed noise shaped by the amplitude envelope instead.
+    """
+    amount = min(1.0, max(0.0, amount))
+    win = max(8, sr // 250)
+    env = np.convolve(np.abs(x), np.ones(win) / win, mode="same")
+    env /= float(np.max(env)) + 1e-9
+    noise = rng.standard_normal(len(x))
+    hiss = np.empty_like(noise)
+    hiss[0] = noise[0]
+    hiss[1:] = noise[1:] - 0.94 * noise[:-1]
+    peak = float(np.max(np.abs(hiss))) or 1.0
+    air = (hiss / peak) * env * (0.10 + 0.20 * amount)
+    return x * (1.0 - 0.70 * amount) + air
+
+
 def _breathy(x, sr, breath, whisper, rng, n=512, hop=128):
-    """Mixes in a random-phase copy of the voice: aspiration noise that follows
-    the voice's own spectral envelope. `whisper` replaces most of the voicing."""
+    """Aspiration noise that follows the voice's spectral envelope.
+    Whisper is a quieter, slower, non-echoing mix (see `_whisper_air`)."""
+    if whisper:
+        return _whisper_air(x, sr, whisper, rng)
     win = np.hanning(n)
     pad = n
     xp = np.pad(x, (pad, pad + hop))
     frames = np.lib.stride_tricks.sliding_window_view(xp, n)[::hop] * win
     spec = np.fft.rfft(frames, axis=1)
     f = np.fft.rfftfreq(n, 1 / sr)
-    weight = np.clip((f - 300) / 2200, 0, 1) if not whisper else np.clip((f - 150) / 400, 0, 1)
+    weight = np.clip((f - 300) / 2200, 0, 1)
     noisy = np.abs(spec) * weight * np.exp(1j * rng.uniform(0, 2 * np.pi, spec.shape))
     yf = np.fft.irfft(noisy, n=n, axis=1) * win
     y = np.zeros(len(xp))
     for i, fr in enumerate(yf):
         y[i * hop:i * hop + n] += fr
     y = y[pad:pad + len(x)] / (np.sum(win ** 2) / hop)
-    if whisper:
-        return x * (1 - 0.85 * whisper) + y * (0.6 + 0.9 * whisper) + y * breath
     return x * (1 - 0.3 * breath) + y * (1.6 * breath)
 
 

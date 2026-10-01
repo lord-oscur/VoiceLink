@@ -10,135 +10,52 @@
 <body>
   <header class="topbar">
     <button id="toggleLeft" class="icon-btn" type="button" title="Conversations"><i data-icon="panelLeft"></i></button>
+    <button id="newChatBtn" class="icon-btn" type="button" title="New conversation"><i data-icon="plus"></i></button>
     <div class="brand">Voice<span>Link</span></div>
-    <button id="modelPill" class="model-pill" type="button"><span class="dot"></span><span class="name">connecting…</span></button>
+    <div class="model-pill-wrap">
+      <button id="modelPickBtn" class="icon-btn small" type="button" title="Change model"><i data-icon="layers"></i></button>
+      <button id="modelPill" class="model-pill" type="button"><span class="dot"></span><span class="name">connecting…</span></button>
+    </div>
     <div class="spacer"></div>
 
     <nav class="toolbar" aria-label="Toolbar">
-      <button id="newChatBtn" class="icon-btn" type="button" title="New conversation"><i data-icon="plus"></i></button>
-
-      <!-- Voice & audio -->
-      <div class="tool" id="voiceTool">
-        <button class="icon-btn" type="button" title="Voice & audio settings"><i data-icon="voice"></i></button>
-        <div class="popover wide" id="voicePanel">
-          <div class="tabs">
-            <button type="button" data-tab="voice">Voice</button>
-            <button type="button" data-tab="fx">Effects</button>
-            <button type="button" data-tab="io">Devices</button>
-          </div>
-
-          <section data-pane="voice">
-            <div class="field">
-              <span class="label">Voice</span>
-              <div class="row">
-                <div class="seg" id="genderSeg" role="group" aria-label="Filter voices by gender">
-                  <button type="button" data-g="all" title="All voices"><i data-icon="all"></i></button>
-                  <button type="button" data-g="female" title="Female voices only"><i data-icon="female"></i></button>
-                  <button type="button" data-g="male" title="Male voices only"><i data-icon="male"></i></button>
-                </div>
-                <select id="voice" class="grow"></select>
-                <button id="previewBtn" class="icon-btn small" type="button" title="Play a sample of this voice"><i data-icon="play"></i></button>
-              </div>
-              <span class="hint">Grouped by language and gender, youngest-sounding first (~ age is an estimate). ★ = default voice.</span>
-              <span class="hint" id="langHint"></span>
-            </div>
-            <label class="check" title="With headphones the echo check is skipped and barge-in is faster">
-              <input type="checkbox" id="headphones"> <i data-icon="headphones"></i> I'm using headphones
-            </label>
-            <p class="hint">Rate, pitch, age and emotion are in the Effects tab.</p>
-          </section>
-
-          <section data-pane="fx" hidden>
-            <div class="layer-title"><span>1 · Voice</span>
-              <button type="button" id="fxReset" class="link-btn" title="Reset all effects"><i data-icon="reset"></i> Reset</button>
-              <button type="button" id="fxPreview" class="icon-btn small" title="Play a sample with these effects"><i data-icon="play"></i></button>
-            </div>
-            <div class="sliders" id="fxSliders"></div>
-            <div class="layer-title"><span>2 · Age</span></div>
-            <div class="chips" id="ageChips"></div>
-            <div class="layer-title"><span>3 · Emotion</span></div>
-            <div class="chips" id="emoChips"></div>
-            <div class="sliders" id="emoSliders"></div>
-            <p class="hint">Applied to every spoken reply in this order: voice → age → emotion. Double-click a slider to reset it.</p>
-          </section>
-
-          <section data-pane="io" hidden>
-            <label class="field">
-              <span class="label"><i data-icon="mic"></i> Microphone</span>
-              <select id="micSel"></select>
-            </label>
-            <label class="field">
-              <span class="label"><i data-icon="speaker"></i> Speaker</span>
-              <select id="spkSel"></select>
-            </label>
-            <label class="check"><input type="checkbox" id="showVirtual"> Show virtual devices (voice changers, mixers, cables)</label>
-            <p class="hint" id="devHint"></p>
-
-            <div class="layer-title"><span><i data-icon="shield"></i> Microphone filters</span></div>
-            <div class="field">
-              <span class="label">Background noise filter</span>
-              <div class="seg text" id="noiseSeg" role="group" aria-label="Background noise filter">
-                <button type="button" data-v="off">Off</button>
-                <button type="button" data-v="light">Light</button>
-                <button type="button" data-v="strong">Strong</button>
-              </div>
-              <span class="hint">Removes steady noise (fans, hum, air conditioning) before speech is detected. Use Strong next to a loud fan.</span>
-            </div>
-            <label class="check"><input type="checkbox" id="pbGate"> Ignore speech playing on this PC (videos, calls, music)</label>
-            <label class="field sub" id="loopRow">
-              <span class="label">Sound comes out of</span>
-              <select id="loopSel"></select>
-            </label>
-            <span class="hint" id="pbHint">Compares what the microphone hears with what the PC is playing, so a video does not start a turn. Not needed with headphones.</span>
-
-            <label class="check"><input type="checkbox" id="onlyMe"> Only my voice</label>
-            <div class="sub" id="onlyMeBox">
-              <div class="row">
-                <button type="button" id="enrollBtn" class="wide-btn grow"><i data-icon="mic"></i> <span>Record my voice (10 s)</span></button>
-              </div>
-              <div id="enrollRun" class="enroll" hidden>
-                <span class="hint">Read this aloud in your normal voice:</span>
-                <blockquote id="enrollText"></blockquote>
-                <div class="bar"><i id="enrollBar"></i></div>
-                <button type="button" id="enrollCancel" class="link-btn">Cancel</button>
-              </div>
-              <div class="sliders" id="onlyMeSlider"></div>
-              <p class="hint" id="onlyMeHint"></p>
-            </div>
-          </section>
-        </div>
-      </div>
-
-      <!-- Profiles -->
-      <div class="tool" id="profileTool">
-        <button class="icon-btn" type="button" title="Settings profiles, export and import"><i data-icon="user"></i></button>
-        <div class="popover" id="profilePanel">
-          <div class="field">
-            <span class="label">Settings profile</span>
-            <select id="profileSel"></select>
-          </div>
-          <div class="btn-grid">
-            <button type="button" id="profNew"><i data-icon="copy"></i> Save as…</button>
-            <button type="button" id="profRename"><i data-icon="pencil"></i> Rename</button>
-            <button type="button" id="profReset"><i data-icon="reset"></i> Reset</button>
-            <button type="button" id="profDelete" class="danger"><i data-icon="trash"></i> Delete</button>
-            <button type="button" id="exportBtn"><i data-icon="download"></i> Export</button>
-            <button type="button" id="importBtn"><i data-icon="upload"></i> Import</button>
-          </div>
-          <input type="file" id="importFile" accept=".json,application/json" hidden>
-          <p class="hint">Changes are saved in this browser automatically to <b id="profileName"></b>.
-            Export writes every profile to a JSON file.</p>
-        </div>
-      </div>
-      <button id="toggleRight" class="icon-btn" type="button" title="Model settings"><i data-icon="panelRight"></i></button>
+      <button id="voiceBtn" class="icon-btn" type="button" title="Voice &amp; effects"><i data-icon="voice"></i></button>
+      <button id="devicesBtn" class="icon-btn" type="button" title="Devices &amp; microphone filters"><i data-icon="speaker"></i></button>
+      <button id="toggleRight" class="icon-btn" type="button" title="Model settings"><i data-icon="chip"></i></button>
     </nav>
   </header>
 
   <div class="layout">
     <aside id="leftPanel" class="side left" aria-label="Conversations">
-      <button id="newChatSide" class="new-chat" type="button"><i data-icon="plus"></i> New chat</button>
-      <div class="search"><i data-icon="search"></i><input id="convSearch" type="text" placeholder="Search conversations"></div>
+      <div class="left-top">
+        <button id="newChatSide" class="new-chat" type="button"><i data-icon="plus"></i> New chat</button>
+        <label class="check incognito-row" title="This chat is not written to disk">
+          <input type="checkbox" id="incognito"> <i data-icon="ghost"></i> Incognito
+        </label>
+        <div class="row wrap-gap">
+          <select id="projectFilter" class="grow" title="Project folder"></select>
+          <button type="button" id="projectNew" class="icon-btn small" title="New project"><i data-icon="folder"></i></button>
+        </div>
+        <div id="labelFilters" class="label-filters"></div>
+        <div class="search"><i data-icon="search"></i><input id="convSearch" type="text" placeholder="Search conversations"></div>
+      </div>
       <div id="convList" class="conv-list"></div>
+      <div class="profile-dock" id="profilePanel">
+        <div class="field">
+          <span class="label"><i data-icon="user"></i> Settings profile</span>
+          <select id="profileSel"></select>
+        </div>
+        <div class="btn-grid">
+          <button type="button" id="profNew"><i data-icon="copy"></i> Save as…</button>
+          <button type="button" id="profRename"><i data-icon="pencil"></i> Rename</button>
+          <button type="button" id="profReset"><i data-icon="reset"></i> Reset</button>
+          <button type="button" id="profDelete" class="danger"><i data-icon="trash"></i> Delete</button>
+          <button type="button" id="exportBtn"><i data-icon="download"></i> Export</button>
+          <button type="button" id="importBtn"><i data-icon="upload"></i> Import</button>
+        </div>
+        <input type="file" id="importFile" accept=".json,application/json" hidden>
+        <p class="hint">Saved in this browser as <b id="profileName"></b>.</p>
+      </div>
     </aside>
 
     <main class="center">
@@ -155,6 +72,13 @@
         <div id="metrics" class="metrics"></div>
       </section>
 
+      <div id="incognitoBanner" class="incognito-banner" hidden><i data-icon="ghost"></i> Incognito — this chat is not stored.</div>
+      <div id="chatMeta" class="chat-meta" hidden>
+        <label class="chat-meta-field"><i data-icon="folder"></i>
+          <select id="chatProject" title="Move this chat to a project"></select></label>
+        <div id="chatLabels" class="label-row"></div>
+        <button type="button" id="chatLabelAdd" class="icon-btn small" title="Add a label"><i data-icon="tag"></i></button>
+      </div>
       <section id="chat" class="chat" aria-live="polite"></section>
 
       <div id="attachTray" class="attach-tray" hidden></div>
@@ -189,42 +113,200 @@
       </form>
     </main>
 
-    <aside id="rightPanel" class="side right" aria-label="Model settings">
-      <div class="side-title"><i data-icon="chip"></i> Model
+    <aside id="rightPanel" class="side right" aria-label="Settings">
+      <div class="side-title" id="rightTitle"><span id="rightTitleIcon"></span> <span id="rightTitleText">Model</span>
         <button id="modelRefresh" class="icon-btn small" type="button" title="Refresh the model list"><i data-icon="refresh"></i></button>
       </div>
-      <div id="modelCard" class="card"></div>
 
-      <details class="card" id="modelSwitch">
-        <summary>Change model <span id="modelCount" class="hint"></span></summary>
-        <div class="search"><i data-icon="search"></i><input id="modelSearch" type="text" placeholder="Filter downloaded models"></div>
-        <div id="modelList" class="model-list"></div>
-      </details>
+      <div class="right-body">
+      <div id="pane-model">
+        <div id="modelCard" class="card"></div>
 
-      <div class="card">
-        <div class="card-title">Load settings · <span id="loadTarget"></span></div>
-        <label class="gen-field"><span>Context length <small id="ctxMax" class="hint"></small></span>
-          <input type="number" id="ctxLen" min="512" step="512"></label>
-        <label class="check"><input type="checkbox" id="flashAttn"> Flash attention (less VRAM for long contexts)</label>
+        <div class="card">
+          <div class="card-title">Load settings · <span id="loadTarget"></span></div>
+          <label class="gen-field"><span>Context length <small id="ctxMax" class="hint"></small></span>
+            <input type="number" id="ctxLen" min="512" step="512"></label>
+          <div class="field">
+            <span class="label">Attention</span>
+            <div class="seg text" id="attnSeg" role="group" aria-label="Attention">
+              <button type="button" data-v="standard">Standard</button>
+              <button type="button" data-v="flash">Flash</button>
+            </div>
+          </div>
+          <label class="check"><input type="checkbox" id="kvGpu"> Offload KV cache to GPU (K cache in VRAM)</label>
+          <label class="gen-field"><span>K cache type</span>
+            <select id="kCache"><option value="">Engine default</option><option value="f16">F16</option><option value="q8_0">Q8_0</option><option value="q4_0">Q4_0</option></select></label>
+          <label class="gen-field" id="vCacheRow"><span>V cache type</span>
+            <select id="vCache"><option value="">Engine default</option><option value="f16">F16</option><option value="q8_0">Q8_0</option><option value="q4_0">Q4_0</option></select></label>
+          <p class="hint" id="kvHint">V cache needs flash attention. LM Studio's REST API may ignore K/V types; GPU offload always applies.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-title">System prompt <span id="sysState" class="tag"></span>
+            <span class="prompt-acts">
+              <button type="button" id="promptSave" class="icon-btn small" title="Save as a new preset"><i data-icon="save"></i></button>
+              <button type="button" id="promptUpdate" class="icon-btn small" title="Overwrite the selected preset"><i data-icon="check"></i></button>
+              <button type="button" id="promptDel" class="icon-btn small" title="Delete saved preset"><i data-icon="trash"></i></button>
+            </span>
+            <button id="sysDefault" class="link-btn" type="button" title="Use the default from config.json">Use default</button></div>
+          <div class="row">
+            <select id="promptLib" class="grow"></select>
+          </div>
+          <textarea id="sysPrompt" rows="6"></textarea>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Generation
+            <button id="genReset" class="link-btn" type="button" title="Use the defaults from config.json"><i data-icon="reset"></i> Defaults</button></div>
+          <div id="genFields" class="gen-fields"></div>
+          <label class="check" id="thinkingRow"><input type="checkbox" id="thinking"> Let the model think first</label>
+          <p class="hint">Thinking makes the first word slower and is never spoken.
+            Fields show the values that will be sent. Settings apply from the next reply.</p>
+        </div>
+      </div>
+
+      <div id="pane-voice" hidden>
+        <div class="field">
+          <span class="label">Voice</span>
+          <div class="row">
+            <div class="seg" id="genderSeg" role="group" aria-label="Filter voices by gender">
+              <button type="button" data-g="all" title="All voices"><i data-icon="all"></i></button>
+              <button type="button" data-g="female" title="Female voices only"><i data-icon="female"></i></button>
+              <button type="button" data-g="male" title="Male voices only"><i data-icon="male"></i></button>
+            </div>
+            <select id="voice" class="grow"></select>
+            <button id="previewBtn" class="icon-btn small" type="button" title="Play a sample of this voice"><i data-icon="play"></i></button>
+          </div>
+          <span class="hint">Picking a voice, age or emotion plays a sample. ★ = default.</span>
+          <span class="hint" id="langHint"></span>
+        </div>
+        <label class="field">
+          <span class="label">Output language</span>
+          <select id="outLang"></select>
+          <span class="hint">Keeps the model's reply in the voice's language so speech is not generated in a different one.</span>
+        </label>
+        <div class="layer-title"><span>Effects</span>
+          <button type="button" id="fxReset" class="link-btn" title="Reset all effects"><i data-icon="reset"></i> Reset</button>
+        </div>
+        <div class="sliders" id="fxSliders"></div>
+        <div class="layer-title"><span>Age</span></div>
+        <div class="chips" id="ageChips"></div>
+        <div class="preset-box" id="ageDetail" hidden></div>
+        <div class="layer-title"><span>Emotion</span></div>
+        <div class="chips" id="emoChips"></div>
+        <div class="preset-box" id="emoDetail" hidden></div>
+        <div class="sliders" id="emoSliders"></div>
+        <div class="row">
+          <button type="button" id="emoTour" class="wide-btn grow"><i data-icon="play"></i> <span>Play all emotions</span></button>
+          <button type="button" id="emoAsk" class="link-btn" title="Send a short scene and ask the model to tag every mood">Ask the model</button>
+        </div>
+        <p class="hint" id="emoTourHint">Play all emotions hears every filter in order.</p>
+      </div>
+
+      <div id="pane-io" hidden>
+        <label class="field">
+          <span class="label"><i data-icon="mic"></i> Microphone</span>
+          <select id="micSel"></select>
+        </label>
+        <label class="field">
+          <span class="label"><i data-icon="speaker"></i> Speaker</span>
+          <select id="spkSel"></select>
+        </label>
+        <label class="check" title="With headphones the echo check is skipped and barge-in is faster">
+          <input type="checkbox" id="headphones"> <i data-icon="headphones"></i> I'm using headphones
+        </label>
+        <label class="check"><input type="checkbox" id="showVirtual"> Show virtual devices (voice changers, mixers, cables)</label>
+        <p class="hint" id="devHint"></p>
+        <div class="layer-title"><span><i data-icon="shield"></i> Microphone filters</span></div>
+        <div class="field">
+          <span class="label">Background noise filter</span>
+          <div class="seg text" id="noiseSeg" role="group" aria-label="Background noise filter">
+            <button type="button" data-v="off">Off</button>
+            <button type="button" data-v="light">Light</button>
+            <button type="button" data-v="strong">Strong</button>
+          </div>
+        </div>
+        <label class="check"><input type="checkbox" id="pbGate"> Ignore speech playing on this PC (videos, calls, music)</label>
+        <label class="field sub" id="loopRow">
+          <span class="label">Sound comes out of</span>
+          <select id="loopSel"></select>
+        </label>
+        <span class="hint" id="pbHint"></span>
+        <label class="check"><input type="checkbox" id="onlyMe"> Only my voice</label>
+        <div class="sub" id="onlyMeBox">
+          <div class="row">
+            <button type="button" id="enrollBtn" class="wide-btn grow"><i data-icon="mic"></i> <span>Record my voice (10 s)</span></button>
+          </div>
+          <div id="enrollRun" class="enroll" hidden>
+            <span class="hint">Read this aloud in your normal voice:</span>
+            <blockquote id="enrollText"></blockquote>
+            <div class="bar"><i id="enrollBar"></i></div>
+            <button type="button" id="enrollCancel" class="link-btn">Cancel</button>
+          </div>
+          <div class="sliders" id="onlyMeSlider"></div>
+          <p class="hint" id="onlyMeHint"></p>
+        </div>
+      </div>
+      </div>
+      <div class="right-foot" id="loadFoot">
         <button id="loadBtn" class="wide-btn" type="button">Reload with these settings</button>
         <p class="hint">Loading replaces the chat model in LM Studio. Bigger contexts use more VRAM.</p>
       </div>
-
-      <div class="card">
-        <div class="card-title">System prompt <span id="sysState" class="tag"></span>
-          <button id="sysDefault" class="link-btn" type="button" title="Use the default from config.json">Use default</button></div>
-        <textarea id="sysPrompt" rows="6"></textarea>
-      </div>
-
-      <div class="card">
-        <div class="card-title">Generation
-          <button id="genReset" class="link-btn" type="button" title="Use the defaults from config.json"><i data-icon="reset"></i> Defaults</button></div>
-        <div id="genFields" class="gen-fields"></div>
-        <label class="check" id="thinkingRow"><input type="checkbox" id="thinking"> Let the model think first</label>
-        <p class="hint">Thinking makes the first word slower and is never spoken.
-          Empty fields use config.json. Settings apply from the next reply and are saved in the current profile.</p>
-      </div>
     </aside>
+  </div>
+
+  <div id="modelModal" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head">
+        <strong>Change model</strong>
+        <span class="hint" id="modelCount"></span>
+        <button type="button" id="modelModalClose" class="icon-btn small" title="Close"><i data-icon="x"></i></button>
+      </div>
+      <div class="search"><i data-icon="search"></i><input id="modelSearch" type="text" placeholder="Search name or key"></div>
+      <div class="picker-filters">
+        <div class="seg text" id="capFilter" role="group">
+          <button type="button" data-cap="reasoning">Thinking</button>
+          <button type="button" data-cap="tools">Tools</button>
+          <button type="button" data-cap="vision">Vision</button>
+        </div>
+        <div class="row wrap-gap">
+          <label class="gen-field grow"><span>Type</span>
+            <select id="kindFilter"><option value="">All types</option><option value="dense">Dense</option><option value="moe">MoE</option><option value="mtp">MTP</option></select></label>
+          <label class="gen-field grow"><span>Family</span>
+            <select id="archFilter"><option value="">All</option></select></label>
+          <label class="gen-field grow"><span>Quant</span>
+            <select id="quantFilter"><option value="">All</option></select></label>
+        </div>
+        <div class="row wrap-gap">
+          <label class="gen-field grow"><span>Sort</span>
+            <select id="modelSort">
+              <option value="name">Name</option>
+              <option value="size">File size</option>
+              <option value="context">Max context</option>
+              <option value="params">Parameters</option>
+              <option value="experts">Expert count</option>
+            </select></label>
+          <label class="check"><input type="checkbox" id="rateNsfw"> +18</label>
+          <label class="check"><input type="checkbox" id="rateAblit"> Not Filtered</label>
+        </div>
+      </div>
+      <div class="modal-list" id="pickerBody">
+        <div id="modelList" class="model-list"></div>
+        <div id="hfBox" class="hf-box" hidden>
+          <div class="hf-head">
+            <strong>Hugging Face</strong>
+            <span class="hint" id="hfVramHint"></span>
+          </div>
+          <div class="row wrap-gap">
+            <label class="check"><input type="checkbox" id="hfIgnoreVram"> Show quants that do not fit this GPU</label>
+            <label class="hf-vram-row"><span>VRAM budget</span>
+              <input type="number" id="hfVramGb" min="1" max="256" step="1">
+              <span>GB</span></label>
+          </div>
+          <div id="hfList"></div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script type="module" src="/static/js/main.js"></script>

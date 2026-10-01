@@ -17,7 +17,8 @@ from aiohttp import web
 
 from . import __version__, loopback
 from .config import ROOT, load_config, model_path
-from .history import ConversationStore
+from .history import ConversationStore, ProjectStore
+from . import hfsearch
 from .llm import LLMError, LMStudioClient
 from .loopback import Loopback
 from .session import Session
@@ -74,6 +75,7 @@ class Engines:
         self.stt = SpeechToText(cfg["stt"])
         self.tts = TextToSpeech(cfg["tts"])
         self.store = ConversationStore()
+        self.projects = ProjectStore()
         self.loopback = Loopback()
         self.speaker = SpeakerID()
         self.llm = None
@@ -128,17 +130,75 @@ async def models_load(request):
     body = await request.json()
     if not body.get("key"):
         raise web.HTTPBadRequest(text="key is required")
-    log.info("Loading model %s (context %s, flash attention %s)...", body["key"],
-             body.get("context_length"), body.get("flash_attention"))
+    log.info("Loading model %s (context %s, flash attention %s, kv gpu %s)...", body["key"],
+             body.get("context_length"), body.get("flash_attention"),
+             body.get("offload_kv_cache_to_gpu"))
     t = time.perf_counter()
     try:
-        result = await llm.load(body["key"], body.get("context_length"), body.get("flash_attention"))
+        result = await llm.load(
+            body["key"], body.get("context_length"), body.get("flash_attention"),
+            offload_kv_cache_to_gpu=body.get("offload_kv_cache_to_gpu"),
+            k_cache=body.get("k_cache") or None,
+            v_cache=body.get("v_cache") or None,
+        )
     except (LLMError, aiohttp.ClientError, asyncio.TimeoutError) as e:
         log.warning("Model load failed: %s", e)
         return web.json_response({"ok": False, "error": str(e) or type(e).__name__})
     log.info("Model %s loaded in %.1fs", llm.model, time.perf_counter() - t)
     (result.get("load_config") or {}).pop("prompt_template", None)
     return web.json_response({"ok": True, "result": result, "status": await llm.status()})
+
+
+async def models_hf(request):
+    q = (request.query.get("q") or "").strip()
+    ignore = request.query.get("ignore") in ("1", "true", "yes")
+    vram = request.query.get("vram")
+    try:
+        vram = float(vram) if vram else None
+    except ValueError:
+        vram = None
+    if vram is None and not ignore:
+        vram = hfsearch.vram_gb()
+    try:
+        data = await hfsearch.search(request.app["http"], q, vram=vram, ignore=ignore)
+    except Exception as e:
+        log.warning("Hugging Face search failed: %s", e)
+        return web.json_response({"ok": False, "error": str(e) or type(e).__name__,
+                                  "results": [], "vram_gb": vram})
+    return web.json_response(data)
+
+
+async def models_download(request):
+    body = await request.json()
+    repo = (body.get("repo") or body.get("model") or "").strip()
+    quant = (body.get("quant") or body.get("quantization") or "").strip() or None
+    if not repo:
+        raise web.HTTPBadRequest(text="repo is required")
+    if not repo.startswith("http"):
+        repo = "https://huggingface.co/" + repo.lstrip("/")
+    log.info("LM Studio download %s %s", repo, quant or "")
+    try:
+        result = await request.app["engines"].llm.download(repo, quant)
+    except (LLMError, aiohttp.ClientError, asyncio.TimeoutError) as e:
+        log.warning("Model download failed to start: %s", e)
+        return web.json_response({"ok": False, "error": str(e) or type(e).__name__})
+    return web.json_response({"ok": True, **result})
+
+
+async def models_download_status(request):
+    job_id = request.match_info["job_id"]
+    if not job_id or any(c in job_id for c in "/\\ ?#"):
+        raise web.HTTPBadRequest(text="bad job id")
+    try:
+        result = await request.app["engines"].llm.download_status(job_id)
+    except (LLMError, aiohttp.ClientError, asyncio.TimeoutError) as e:
+        return web.json_response({"ok": False, "error": str(e) or type(e).__name__})
+    return web.json_response({"ok": True, **result})
+
+
+async def hardware(request):
+    vram = hfsearch.vram_gb()
+    return web.json_response({"vram_gb": vram, "gpu": bool(vram)})
 
 
 async def conv_list(request):
@@ -154,11 +214,53 @@ async def conv_get(request):
 
 async def conv_patch(request):
     body = await request.json()
+    fields = {}
+    if "title" in body:
+        fields["title"] = body.get("title")
+    if "labels" in body:
+        fields["labels"] = body.get("labels")
+    if "project_id" in body:
+        fields["project_id"] = body.get("project_id")
     try:
-        conv = request.app["engines"].store.rename(request.match_info["cid"], body.get("title"))
+        conv = request.app["engines"].store.update(request.match_info["cid"], **fields)
     except (KeyError, OSError, ValueError):
         raise web.HTTPNotFound()
-    return web.json_response({"id": conv["id"], "title": conv["title"]})
+    return web.json_response({"id": conv["id"], "title": conv.get("title"),
+                              "labels": conv.get("labels") or [],
+                              "project_id": conv.get("project_id")})
+
+
+async def project_list(request):
+    return web.json_response(request.app["engines"].projects.list())
+
+
+async def project_create(request):
+    body = await request.json()
+    try:
+        return web.json_response(request.app["engines"].projects.create(body.get("name")), status=201)
+    except ValueError as e:
+        raise web.HTTPBadRequest(text=str(e))
+
+
+async def project_patch(request):
+    body = await request.json()
+    try:
+        return web.json_response(request.app["engines"].projects.rename(
+            request.match_info["pid"], body.get("name")))
+    except KeyError:
+        raise web.HTTPNotFound()
+    except ValueError as e:
+        raise web.HTTPBadRequest(text=str(e))
+
+
+async def project_delete(request):
+    pid = request.match_info["pid"]
+    try:
+        request.app["engines"].projects.delete(pid)
+    except KeyError:
+        raise web.HTTPNotFound()
+    request.app["engines"].store.clear_project(pid)
+    return web.json_response({"ok": True})
 
 
 async def conv_delete(request):
@@ -364,10 +466,18 @@ def main():
     app.router.add_get("/api/llm_defaults", llm_defaults)
     app.router.add_get("/api/models", models_list)
     app.router.add_post("/api/models/load", models_load)
+    app.router.add_get("/api/models/hf", models_hf)
+    app.router.add_post("/api/models/download", models_download)
+    app.router.add_get("/api/models/download/{job_id}", models_download_status)
+    app.router.add_get("/api/hardware", hardware)
     app.router.add_get("/api/conversations", conv_list)
     app.router.add_get("/api/conversations/{cid}", conv_get)
     app.router.add_patch("/api/conversations/{cid}", conv_patch)
     app.router.add_delete("/api/conversations/{cid}", conv_delete)
+    app.router.add_get("/api/projects", project_list)
+    app.router.add_post("/api/projects", project_create)
+    app.router.add_patch("/api/projects/{pid}", project_patch)
+    app.router.add_delete("/api/projects/{pid}", project_delete)
     app.router.add_get("/ws", ws_handler)
     app.router.add_static("/static/", WEB_DIR)
 
