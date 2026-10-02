@@ -6,3 +6,5 @@ __pycache__/
 *.part
 *.log
 .chrome-tmp/
+config.json
+changes_v*.md

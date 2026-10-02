@@ -167,9 +167,9 @@ browser sends `stt.languages` as `["en"]` or `["en", second]`.
 
 ## Configuration (`config.json`)
 
-`config.json` is created with the defaults below. You only need to keep the
-keys you change; missing keys fall back to the defaults. Restart
-`run.bat` after editing.
+`config.json` is local (not in git). Copy `config.example.json` to
+`config.json` or just run — missing keys fall back to the defaults below.
+Restart `run.bat` after editing.
 
 ### `server`
 | Key | Default | Meaning |
@@ -319,7 +319,7 @@ Logs appear in the `run.bat` window. For detailed timings per segment, run
 
 ```
 setup.bat, run.bat, test.bat, soundcheck.bat   Windows entry points
-config.json                    settings (see above)
+config.example.json            empty starter; copy to config.json to override defaults
 voicelink/
   server.py     aiohttp web server, model loading, /ws endpoint
   session.py    duplex turn engine: VAD state machine, speculative turns,
@@ -337,7 +337,6 @@ tools/          model download, end-to-end self-test, filter tests, benchmarks
 models/         downloaded models (not part of the source)
 data/           saved conversations
 docs/DEVELOPMENT.md   design decisions, benchmarks and test results
-changes_v1.md   v1 feature list and implementation notes
 ```
 
 Models: [Silero VAD](https://github.com/snakers4/silero-vad) (MIT),

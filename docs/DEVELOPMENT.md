@@ -357,7 +357,7 @@ Other issues found and fixed along the way:
 
 ## 10. UI v2 (layout, model picker, chat folders)
 
-See `changes_v2.md` for the requirement list. Notes from the implementation:
+Notes from the v2 UI implementation:
 
 * The right panel is three pages (Model / Voice / Devices). The old voice
   hover popover is gone; the three toolbar icons open the matching page.
